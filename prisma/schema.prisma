@@ -1,0 +1,640 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum Role {
+  brand
+  influencer
+  admin
+}
+
+enum Plan {
+  free
+  pro
+  business
+}
+
+enum InfluencerStatus {
+  pending
+  active
+  rejected
+  suspended
+}
+
+enum KycStatus {
+  none
+  pending
+  verified
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String   @map("target_id")
+  data        Json
+  ip          String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}
+
+model RefSequence {
+  name  String @id
+  value Int
+
+  @@map("ref_sequences")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String    @map("password_hash")
+  role            Role
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  lastLoginAt     DateTime? @map("last_login_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  brand          Brand?
+  influencer     Influencer?
+  sessions       Session[]
+  passwordResets PasswordReset[]
+  preference     UserPreference?
+  flagsUpdated   FeatureFlag[]
+  contactRequests ContactRequest[]
+  payments        Payment[]
+  uploads         Upload[]
+  campaignEvents  CampaignEvent[]
+  campaignMessages CampaignMessage[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @map("expires_at")
+  ip        String?
+  userAgent String?  @map("user_agent") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+
+  @@index([tokenHash])
+  @@map("password_resets")
+}
+
+model Brand {
+  id           String    @id @default(cuid())
+  userId       String    @unique @map("user_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  contactName  String    @map("contact_name")
+  sector       String    @default("")
+  plan         Plan      @default(free)
+  planRenewsAt DateTime? @map("plan_renews_at")
+  balanceFcfa  Int       @default(0) @map("balance_fcfa")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  favorites    Favorite[]
+  campaigns    Campaign[]
+  subscriptions Subscription[]
+
+  @@map("brands")
+}
+
+model Influencer {
+  id                 String           @id @default(cuid())
+  userId             String           @unique @map("user_id")
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  handle             String           @unique
+  name               String
+  phone              String           @default("")
+  city               String
+  bio                String           @db.Text
+  bioDraft           String?          @map("bio_draft") @db.Text
+  hue                Int
+  photoUrl           String?          @map("photo_url") @db.Text
+  verified           Boolean          @default(false)
+  certified          Boolean          @default(false)
+  kycStatus          KycStatus        @default(none) @map("kyc_status")
+  featuredUntil      DateTime?        @map("featured_until")
+  analyticsUntil     DateTime?        @map("analytics_until")
+  trustedPhones      Json             @default("[]") @map("trusted_phones")
+  status             InfluencerStatus @default(pending)
+  acceptsPub         Boolean          @default(true) @map("accepts_pub")
+  acceptsPartenariat Boolean          @default(true) @map("accepts_partenariat")
+  acceptsDedicace    Boolean          @default(false) @map("accepts_dedicace")
+  scoreAuth          Int              @default(90) @map("score_auth")
+  scoreCreat         Float            @default(4) @map("score_creat")
+  scoreBrief         Int              @default(90) @map("score_brief")
+  scoreOnTime        Int              @default(90) @map("score_on_time")
+  scoreRating        Float            @default(5) @map("score_rating")
+  scoreReviews       Int              @default(0) @map("score_reviews")
+  scoreDone          Int              @default(0) @map("score_done")
+  nets               Json
+  cats               Json
+  audience           Json
+  days               Json
+  rates              Json
+  qrScans            Int              @default(0) @map("qr_scans")
+  contactsCount      Int              @default(0) @map("contacts_count")
+  totalFollowers     Int              @default(0) @map("total_followers")
+  avgEngagement      Float            @default(0) @map("avg_engagement")
+  minPrice           Int              @default(0) @map("min_price")
+  badgeKey           String           @default("normal") @map("badge_key")
+  pullupScore        Float            @default(0) @map("pullup_score")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  favorites          Favorite[]
+  viewsDaily         ProfileViewDaily[]
+  contactRequests    ContactRequest[]
+  reviews            Review[]
+  wallet             Wallet?
+  campaigns          Campaign[]
+  withdrawals        Withdrawal[]
+  boostPurchases     BoostPurchase[]
+
+  @@index([status, verified])
+  @@index([pullupScore])
+  @@map("influencers")
+}
+
+model Favorite {
+  brandId      String     @map("brand_id")
+  influencerId String     @map("influencer_id")
+  brand        Brand      @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@id([brandId, influencerId])
+  @@index([influencerId])
+  @@map("favorites")
+}
+
+model ProfileViewDaily {
+  influencerId String     @map("influencer_id")
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  day          DateTime   @db.Date
+  views        Int        @default(0)
+
+  @@id([influencerId, day])
+  @@map("profile_views_daily")
+}
+
+model ContactRequest {
+  id            String     @id @default(cuid())
+  influencerId  String     @map("influencer_id")
+  influencer    Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  fromName      String     @map("from_name")
+  contact       String
+  message       String     @db.Text
+  type          String
+  senderUserId  String?    @map("sender_user_id")
+  sender        User?      @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+  ip            String?
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  @@index([influencerId, createdAt])
+  @@map("contact_requests")
+}
+
+model Review {
+  id           String     @id @default(cuid())
+  campaignId   String?    @unique @map("campaign_id")
+  campaign     Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  influencerId String     @map("influencer_id")
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  brandName    String     @map("brand_name")
+  stars        Int
+  text         String     @db.Text
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@index([influencerId, createdAt])
+  @@map("reviews")
+}
+
+model FeatureFlag {
+  key       String   @id
+  value     Boolean
+  updatedBy String?  @map("updated_by")
+  updater   User?    @relation(fields: [updatedBy], references: [id], onDelete: SetNull)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_flags")
+}
+
+enum CatalogKind {
+  category
+  city
+  objective
+  contact_type
+}
+
+model CatalogItem {
+  id        String      @id @default(cuid())
+  kind      CatalogKind
+  key       String      @db.VarChar(64)
+  label     String      @db.VarChar(191)
+  meta      Json
+  sortOrder Int         @default(0) @map("sort_order")
+  active    Boolean     @default(true)
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  @@unique([kind, key])
+  @@index([kind, active, sortOrder])
+  @@map("catalog_items")
+}
+
+model UserPreference {
+  userId    String @id @map("user_id")
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  onboarded Boolean @default(false)
+
+  @@map("user_preferences")
+}
+
+model Notification {
+  id           String    @id @default(cuid())
+  recipientKey String    @map("recipient_key")
+  text         String    @db.Text
+  link         String
+  readAt       DateTime? @map("read_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([recipientKey, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+enum PaymentPurpose {
+  campaign
+  plan
+  boost
+}
+
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  expired
+}
+
+enum PayoutPurpose {
+  withdrawal
+}
+
+enum PayoutStatus {
+  pending
+  sent
+  failed
+}
+
+enum LedgerAccount {
+  brand_balance
+  escrow
+  influencer_wallet
+  platform_revenue
+  external_psp
+}
+
+enum LedgerDirection {
+  debit
+  credit
+}
+
+enum EscrowHoldState {
+  open
+  released
+  refunded
+}
+
+model Payment {
+  id              String         @id @default(cuid())
+  purpose         PaymentPurpose
+  targetId        String         @map("target_id")
+  payerUserId     String         @map("payer_user_id")
+  payer           User           @relation(fields: [payerUserId], references: [id], onDelete: Cascade)
+  method          String
+  phone           String?
+  amountFcfa      Int            @map("amount_fcfa")
+  fromBalanceFcfa Int            @default(0) @map("from_balance_fcfa")
+  provider        String
+  providerRef     String?        @unique @map("provider_ref")
+  status          PaymentStatus  @default(pending)
+  rawPayload      Json           @map("raw_payload")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@index([payerUserId])
+  @@map("payments")
+}
+
+model Payout {
+  id          String        @id @default(cuid())
+  purpose     PayoutPurpose @default(withdrawal)
+  targetId    String        @map("target_id")
+  amountFcfa  Int           @map("amount_fcfa")
+  operator    String
+  phone       String
+  providerRef String?       @unique @map("provider_ref")
+  status      PayoutStatus  @default(pending)
+  rawPayload  Json          @map("raw_payload")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  withdrawal Withdrawal?
+
+  @@map("payouts")
+}
+
+enum WithdrawOperator {
+  om
+  mtn
+  moov
+  wave
+}
+
+enum WithdrawalStatus {
+  pending
+  sent
+  failed
+}
+
+enum SubscriptionPlan {
+  pro
+  business
+}
+
+enum SubscriptionStatus {
+  pending
+  active
+  past_due
+  cancelled
+}
+
+enum BoostKey {
+  pro
+  certified
+  analytics
+}
+
+enum BoostStatus {
+  pending
+  active
+  expired
+}
+
+model Withdrawal {
+  id           String           @id @default(cuid())
+  influencerId String           @map("influencer_id")
+  influencer   Influencer       @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  amountFcfa   Int              @map("amount_fcfa")
+  operator     WithdrawOperator
+  phone        String
+  payoutId     String           @unique @map("payout_id")
+  payout       Payout           @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  status       WithdrawalStatus @default(pending)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  @@index([influencerId, createdAt])
+  @@map("withdrawals")
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  brandId            String             @map("brand_id")
+  brand              Brand              @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  plan               SubscriptionPlan
+  status             SubscriptionStatus @default(pending)
+  currentPeriodStart DateTime           @map("current_period_start")
+  currentPeriodEnd   DateTime           @map("current_period_end")
+  paymentId          String?            @map("payment_id")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  @@index([brandId, status])
+  @@index([currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+model BoostPurchase {
+  id           String     @id @default(cuid())
+  influencerId String     @map("influencer_id")
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  boostKey     BoostKey   @map("boost_key")
+  amountFcfa   Int        @map("amount_fcfa")
+  paymentId    String?    @map("payment_id")
+  status       BoostStatus @default(pending)
+  startsAt     DateTime?  @map("starts_at")
+  endsAt       DateTime?  @map("ends_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@index([influencerId, status])
+  @@index([endsAt])
+  @@map("boost_purchases")
+}
+
+model LedgerEntry {
+  id          String          @id @default(cuid())
+  txId        String          @map("tx_id")
+  accountType LedgerAccount   @map("account_type")
+  accountId   String?         @map("account_id")
+  campaignId  String?         @map("campaign_id")
+  direction   LedgerDirection
+  amountFcfa  Int             @map("amount_fcfa")
+  label       String
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@index([txId])
+  @@index([accountType, accountId])
+  @@index([campaignId])
+  @@map("ledger_entries")
+}
+
+model Wallet {
+  influencerId  String     @id @map("influencer_id")
+  influencer    Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  availableFcfa Int        @default(0) @map("available_fcfa")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  @@map("wallets")
+}
+
+model EscrowHold {
+  campaignId   String          @id @map("campaign_id")
+  brandId      String          @map("brand_id")
+  influencerId String          @map("influencer_id")
+  amountFcfa   Int             @map("amount_fcfa")
+  feeFcfa      Int             @map("fee_fcfa")
+  payoutFcfa   Int             @map("payout_fcfa")
+  state        EscrowHoldState @default(open)
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  @@index([influencerId, state])
+  @@map("escrow_holds")
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String
+  eventId     String    @unique @map("event_id")
+  payload     Json
+  processedAt DateTime? @map("processed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([processedAt])
+  @@map("webhook_events")
+}
+
+enum CampaignStatus {
+  awaiting_payment
+  paid
+  accepted
+  published
+  completed
+  dispute
+  declined
+  cancelled
+  refunded
+}
+
+enum UploadPurpose {
+  brief
+}
+
+model Campaign {
+  id              String         @id @default(cuid())
+  ref             String         @unique
+  brandId         String         @map("brand_id")
+  brand           Brand          @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  influencerId    String         @map("influencer_id")
+  influencer      Influencer     @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  offerRateId     String         @map("offer_rate_id")
+  offerNet        String         @map("offer_net")
+  offerFormat     String         @map("offer_format")
+  offerPrice      Int            @map("offer_price")
+  amountFcfa      Int            @map("amount_fcfa")
+  feeFcfa         Int            @map("fee_fcfa")
+  payoutFcfa      Int            @map("payout_fcfa")
+  fromBalanceFcfa Int            @default(0) @map("from_balance_fcfa")
+  payMethod       String         @map("pay_method")
+  status          CampaignStatus @default(awaiting_payment)
+  cancelReason    String?        @map("cancel_reason")
+  briefTitle      String         @map("brief_title")
+  briefObjective  String         @map("brief_objective")
+  briefTheme      String         @map("brief_theme")
+  briefText       String         @map("brief_text") @db.Text
+  briefLink       String         @map("brief_link")
+  briefDate       DateTime?      @map("brief_date")
+  briefFileUrl    String?        @map("brief_file_url") @db.Text
+  utmUrl          String         @map("utm_url") @db.Text
+  proofUrl        String?        @map("proof_url") @db.Text
+  proofNote       String?        @map("proof_note") @db.Text
+  proofAt         DateTime?      @map("proof_at")
+  perfViews       Int?           @map("perf_views")
+  perfLikes       Int?           @map("perf_likes")
+  perfComments    Int?           @map("perf_comments")
+  perfShares      Int?           @map("perf_shares")
+  perfClicks      Int?           @map("perf_clicks")
+  disputeReason   String?        @map("dispute_reason") @db.Text
+  acceptedAt      DateTime?      @map("accepted_at")
+  publishedAt     DateTime?      @map("published_at")
+  completedAt     DateTime?      @map("completed_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  events          CampaignEvent[]
+  messages        CampaignMessage[]
+  utmClicks       UtmClick[]
+  review          Review?
+
+  @@index([brandId, createdAt(sort: Desc)])
+  @@index([influencerId, status])
+  @@index([status, publishedAt])
+  @@map("campaigns")
+}
+
+enum MessageFrom {
+  brand
+  influencer
+  admin
+}
+
+model CampaignMessage {
+  id           String      @id @default(cuid())
+  campaignId   String      @map("campaign_id")
+  campaign     Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  fromRole     MessageFrom @map("from_role")
+  authorUserId String      @map("author_user_id")
+  author       User        @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+  body         String      @db.VarChar(2000)
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  @@index([campaignId, createdAt])
+  @@map("campaign_messages")
+}
+
+model UtmClick {
+  id         String   @id @default(cuid())
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ipHash     String   @map("ip_hash")
+  userAgent  String   @map("user_agent") @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([campaignId, ipHash, createdAt])
+  @@map("utm_clicks")
+}
+
+model CampaignEvent {
+  id          String   @id @default(cuid())
+  campaignId  String   @map("campaign_id")
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  status      String
+  note        String   @db.Text
+  actorUserId String?  @map("actor_user_id")
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([campaignId, createdAt])
+  @@map("campaign_events")
+}
+
+model Upload {
+  id          String        @id @default(cuid())
+  ownerUserId String        @map("owner_user_id")
+  owner       User          @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  key         String
+  mime        String
+  size        Int
+  purpose     UploadPurpose
+  fileUrl     String        @map("file_url") @db.Text
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  @@index([ownerUserId, purpose])
+  @@map("uploads")
+}

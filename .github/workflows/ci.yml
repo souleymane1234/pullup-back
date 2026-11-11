@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run test:e2e
+      - run: npm run test:cov
+      - run: npm audit --audit-level=critical
+      - run: npx prisma generate
+        env:
+          DATABASE_URL: mysql://root:x@127.0.0.1:3306/pullup
+      - run: npx prisma validate
+        env:
+          DATABASE_URL: mysql://root:x@127.0.0.1:3306/pullup
+      - run: npm run build
+      - name: Image de production
+        run: test -f Dockerfile && grep -q "USER pullup" Dockerfile
+      - name: Vérifier les migrations
+        run: |
+          test -f prisma/migrations/20261004130000_init_socle/migration.sql
+          test -f prisma/migrations/20261004140000_auth_accounts/migration.sql
+          test -f prisma/migrations/20261004150000_platform_notifications/migration.sql
+          test -f prisma/migrations/20261004170000_finance_ledger/migration.sql
+          test -f prisma/migrations/20261004200000_wallet_billing/migration.sql
+          test -f prisma/migrations/20261005120000_ledger_immutable/migration.sql
+          grep -q "CREATE TABLE \`audit_logs\`" prisma/migrations/20261004130000_init_socle/migration.sql
+          grep -q "CREATE TABLE \`ref_sequences\`" prisma/migrations/20261004130000_init_socle/migration.sql
+          ! grep -R "db push" prisma/migrations
+      - name: Contrat front (si le dépôt voisin est présent)
+        run: npm run test:contract
+        env:
+          VITE_API_URL: ""

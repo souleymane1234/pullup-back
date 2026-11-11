@@ -1,0 +1,5176 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "PULLUP API",
+    "version": "1.0.0",
+    "description": "Marketplace d'influence (Côte d'Ivoire). Préfixe `/api`. Cookie de session HttpOnly `pullup.sid`.\n\n## Admin\nToutes les routes du tag **Admin** exigent le rôle `admin`. Un annonceur ou un influenceur reçoit **403** `{ \"message\": \"…\" }`.\n\n1. `POST /auth/login` avec `admin@pullup.net` et `DEMO_PASSWORD`\n2. Le cookie `pullup.sid` est posé (Swagger envoie `credentials: include`)\n3. Appelez les routes `[Admin]`\n\nCompte démo : `admin@pullup.net`.\n\n## Paiements Central APIS\nEncaissement : `POST https://api.centralapis.com/api/v1/finance/deposit` (ils l’appellent CASHOUT).\nRetrait : `POST https://api.centralapis.com/api/v1/finance/withdraw` (ils l’appellent CASHIN).\nStatut : `GET …/finance/status/transaction/{reference}`.\n\nOpérateurs : `om` → orange, `mtn`, `moov`, `wave`. La carte n’est pas supportée.\nMontant : entier FCFA, **minimum 200**, **multiple de 50**. Téléphone : **10 chiffres**, sans `+225`.\nOrange Money : envoyer `otp` (code `#144*82#`) sur campagne, formule et boost.\nWave : la réponse peut contenir `redirectUrl` (`payment_url`).\n\nCallback à déclarer chez Central APIS : `http://13.140.137.171:8090/api/payments/callback`."
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "Même origine"
+    },
+    {
+      "url": "http://localhost:6000/api",
+      "description": "Local (PORT=6000)"
+    },
+    {
+      "url": "http://13.140.137.171:8090/api",
+      "description": "VPS (callback Central APIS)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Admin",
+      "description": "Back-office. **Rôle admin obligatoire.** 401 si non connecté, 403 sinon. Compte : `admin@pullup.net`."
+    },
+    {
+      "name": "Auth",
+      "description": "Session, inscription, mot de passe."
+    },
+    {
+      "name": "Influenceurs",
+      "description": "Annuaire, vitrine, photo, demandes."
+    },
+    {
+      "name": "Matching",
+      "description": "Matching V3 (flag `v3`)."
+    },
+    {
+      "name": "Campagnes",
+      "description": "Réservation V2, cycle de vie, messages, avis."
+    },
+    {
+      "name": "Espaces",
+      "description": "Espaces perso annonceur / influenceur."
+    },
+    {
+      "name": "Facturation",
+      "description": "Formules, options, retraits Mobile Money (Central APIS)."
+    },
+    {
+      "name": "Plateforme",
+      "description": "Snapshot, notifications, préférences."
+    },
+    {
+      "name": "Paiements",
+      "description": "Callback Central APIS (deposit / withdraw) et webhook PSP. Public, sans cookie."
+    },
+    {
+      "name": "Système",
+      "description": "Santé, documentation, métriques."
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "pullup.sid",
+        "description": "Cookie de session. Connectez-vous via POST /auth/login."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Non connecté (cookie `pullup.sid` absent ou expiré).",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Connectez-vous pour continuer."
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Droits insuffisants pour ce rôle.",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Action non autorisée pour ce compte."
+            }
+          }
+        }
+      },
+      "ForbiddenAdmin": {
+        "description": "Rôle **admin** requis (annonceur ou influenceur connecté).",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Action non autorisée pour ce compte."
+            }
+          }
+        }
+      },
+      "BusinessError": {
+        "description": "Erreur métier — `{ message }` en français.",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Identifiants incorrects."
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Corps de requête invalide (validation Zod).",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Required"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Transition impossible dans l'état actuel de la campagne.",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Cette action n'est plus disponible."
+            }
+          }
+        }
+      },
+      "OtpRequired": {
+        "description": "Code Orange Money manquant (`#144*82#`).",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Saisissez le code Orange Money (#144*82#) pour confirmer le paiement."
+            }
+          }
+        }
+      },
+      "AmountRejected": {
+        "description": "Montant Central APIS invalide.",
+        "content": {
+          "application/json": {
+            "example": {
+              "message": "Le montant doit être au moins 200 FCFA et un multiple de 50."
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Message": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "CentralApisResult": {
+        "type": "object",
+        "properties": {
+          "recipient_phone_number": {
+            "type": "string",
+            "example": "0700000000"
+          },
+          "partner_reference": {
+            "type": "string",
+            "description": "Référence PULLUP (id du paiement ou du retrait)."
+          },
+          "amount_send_net": {
+            "type": "string"
+          },
+          "amount_receive_in_balance": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string",
+            "enum": ["orange", "mtn", "moov", "wave"]
+          },
+          "typeTransaction": {
+            "type": "string",
+            "enum": ["DEPOSIT", "WITHDRAW"],
+            "description": "DEPOSIT = encaissement client. WITHDRAW = crédit du compte influenceur."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["INITIALISE", "PENDING", "DONE", "FAILURE"]
+          },
+          "transaction_reference": {
+            "type": "string",
+            "description": "Référence opérateur Mobile Money."
+          },
+          "payment_url": {
+            "type": "string",
+            "description": "Deep link Wave, si présent."
+          }
+        }
+      },
+      "CentralApisCallback": {
+        "type": "object",
+        "properties": {
+          "etat": {
+            "type": "boolean"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CentralApisResult"
+          },
+          "error": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/admin/dashboard": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Tableau de bord",
+        "x-updated": true,
+        "description": "Listes du seed : influenceurs, annonceurs, campagnes, flags v2/v3, retraits, litiges.",
+        "operationId": "adminDashboard",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tableaux du back-office (listes raccourcies à 2 éléments).",
+            "content": {
+              "application/json": {
+                "example": {
+                  "campaigns": [
+                    {
+                      "id": "cmuyd56sy001d6ci0t6yc9331",
+                      "ref": "PU-2610-141",
+                      "brandId": "b1",
+                      "infId": "i1",
+                      "offer": {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      },
+                      "amount": 90000,
+                      "fee": 13500,
+                      "payout": 76500,
+                      "status": "paid",
+                      "createdAt": "2026-10-07T17:10:07.282Z",
+                      "pay": "om",
+                      "brief": {
+                        "title": "Lancement du sérum Karité Glow",
+                        "objective": "notoriete",
+                        "theme": "beaute",
+                        "text": "Présenter le sérum dans une routine du matin.",
+                        "link": "https://savane.ci/glow",
+                        "date": null,
+                        "file": null
+                      },
+                      "log": [
+                        {
+                          "s": "paid",
+                          "at": "2026-10-07T17:10:07.317Z",
+                          "n": "Paiement Orange Money reçu · 90 000 FCFA bloqués en séquestre"
+                        }
+                      ],
+                      "perf": null,
+                      "proof": null,
+                      "msgs": [],
+                      "review": null,
+                      "disputeReason": null,
+                      "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2610-141&utm_content=amakouassi",
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "hue": 47,
+                        "photo": null,
+                        "verified": true
+                      },
+                      "brand": {
+                        "id": "b1",
+                        "name": "Savane Cosmetics"
+                      }
+                    },
+                    {
+                      "id": "c1",
+                      "ref": "PU-2410-137",
+                      "brandId": "b1",
+                      "infId": "i1",
+                      "offer": {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      },
+                      "amount": 90000,
+                      "fee": 13500,
+                      "payout": 76500,
+                      "status": "accepted",
+                      "createdAt": "2026-10-06T10:12:00.000Z",
+                      "pay": "om",
+                      "brief": {
+                        "title": "Lancement du sérum Karité Glow",
+                        "objective": "notoriete",
+                        "theme": "beaute",
+                        "text": "Présenter le nouveau sérum au karité dans une routine du matin. Mentionner @savanecosmetics et le code GLOW10.",
+                        "link": "https://savane.ci/glow",
+                        "date": "2026-10-10T10:12:00.000Z",
+                        "file": null
+                      },
+                      "log": [
+                        {
+                          "s": "paid",
+                          "at": "2026-10-06T10:12:00.000Z",
+                          "n": "Paiement reçu · 90 000 FCFA bloqués en séquestre"
+                        },
+                        {
+                          "s": "accepted",
+                          "at": "2026-10-07T17:10:07.348Z",
+                          "n": "Ama Kouassi a accepté la campagne"
+                        }
+                      ],
+                      "perf": null,
+                      "proof": null,
+                      "msgs": [
+                        {
+                          "from": "brand",
+                          "t": "Bonjour Ama, le colis avec le sérum arrive chez vous demain avant 12 h.",
+                          "at": "2026-10-06T12:12:00.000Z"
+                        },
+                        {
+                          "from": "brand",
+                          "t": "Le colis arrive demain.",
+                          "at": "2026-10-07T17:10:07.329Z"
+                        }
+                      ],
+                      "review": null,
+                      "disputeReason": null,
+                      "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2410-137&utm_content=amakouassi",
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "hue": 47,
+                        "photo": null,
+                        "verified": true
+                      },
+                      "brand": {
+                        "id": "b1",
+                        "name": "Savane Cosmetics"
+                      }
+                    }
+                  ],
+                  "influencers": [
+                    {
+                      "id": "i12",
+                      "handle": "koffigaming",
+                      "name": "Koffi Gaming",
+                      "city": "Abidjan · Bingerville",
+                      "cats": ["jeux", "tech"],
+                      "bio": "Streams FIFA, eFootball et jeux mobiles. Tournois communautaires chaque week-end.",
+                      "net": {
+                        "fb": [66000, 3.9],
+                        "ig": [38000, 4.6],
+                        "tt": [142000, 7.9]
+                      },
+                      "aud": {
+                        "f": 15,
+                        "ages": [24, 52, 19, 5],
+                        "cities": [
+                          ["Abidjan", 63],
+                          ["Bouaké", 8]
+                        ]
+                      },
+                      "auth": 89,
+                      "creat": 4.5,
+                      "brief": 90,
+                      "onTime": 91,
+                      "rating": 4.3,
+                      "reviews": 15,
+                      "done": 12,
+                      "rates": [
+                        {
+                          "id": "i12r0",
+                          "net": "tt",
+                          "fmt": "Vidéo gameplay",
+                          "price": 60000
+                        },
+                        {
+                          "id": "i12r1",
+                          "net": "fb",
+                          "fmt": "Live tournoi",
+                          "price": 90000
+                        }
+                      ],
+                      "days": ["Ven", "Sam"],
+                      "verified": true,
+                      "certified": false,
+                      "featured": false,
+                      "analytics": false,
+                      "status": "active",
+                      "accepts": {
+                        "pub": true,
+                        "partenariat": true,
+                        "dedicace": false
+                      },
+                      "views": [87, 141, 90, 143, 109, 142, 127],
+                      "qr": 290,
+                      "contacts": 38,
+                      "hue": 204,
+                      "photo": null,
+                      "favorite": false,
+                      "email": "koffigaming@mail.ci",
+                      "phone": ""
+                    },
+                    {
+                      "id": "i16",
+                      "handle": "tontonblagueur",
+                      "name": "Tonton Blagueur",
+                      "city": "Abidjan · Adjamé",
+                      "cats": ["humour", "musique"],
+                      "bio": "Blagues, parodies et chansons détournées. Le rire du quartier, partagé dans tout le pays.",
+                      "net": {
+                        "fb": [360000, 3.9],
+                        "tt": [640000, 8.7]
+                      },
+                      "aud": {
+                        "f": 44,
+                        "ages": [13, 48, 28, 11],
+                        "cities": [
+                          ["Abidjan", 54],
+                          ["Bouaké", 12]
+                        ]
+                      },
+                      "auth": 87,
+                      "creat": 4.6,
+                      "brief": 87,
+                      "onTime": 89,
+                      "rating": 4.3,
+                      "reviews": 52,
+                      "done": 44,
+                      "rates": [
+                        {
+                          "id": "i16r0",
+                          "net": "tt",
+                          "fmt": "Sketch sponsorisé",
+                          "price": 160000
+                        },
+                        {
+                          "id": "i16r1",
+                          "net": "fb",
+                          "fmt": "Vidéo Facebook",
+                          "price": 110000
+                        }
+                      ],
+                      "days": ["Mar", "Sam"],
+                      "verified": true,
+                      "certified": false,
+                      "featured": false,
+                      "analytics": false,
+                      "status": "active",
+                      "accepts": {
+                        "pub": true,
+                        "partenariat": true,
+                        "dedicace": false
+                      },
+                      "views": [497, 805, 512, 818, 621, 808, 722],
+                      "qr": 1656,
+                      "contacts": 214,
+                      "hue": 32,
+                      "photo": null,
+                      "favorite": false,
+                      "email": "tontonblagueur@mail.ci",
+                      "phone": ""
+                    }
+                  ],
+                  "brands": [
+                    {
+                      "id": "b3",
+                      "name": "Kalo Fintech",
+                      "contact": "Ines Yapo",
+                      "email": "growth@kalo.ci",
+                      "plan": "business",
+                      "sector": "Fintech",
+                      "balance": 0
+                    },
+                    {
+                      "id": "b2",
+                      "name": "Maquis Le Palmier",
+                      "contact": "Serge Koné",
+                      "email": "contact@lepalmier.ci",
+                      "plan": "free",
+                      "sector": "Restauration",
+                      "balance": 0
+                    }
+                  ],
+                  "flags": {
+                    "v2": true,
+                    "v3": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/influencers/{id}/verify": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Vérifier un influenceur",
+        "operationId": "adminVerifyInfluencer",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profil vérifié",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Le Gbaka Comedy est maintenant vérifié."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/influencers/{id}/reject": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Refuser une inscription",
+        "operationId": "adminRejectInfluencer",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "reason": "Profil incomplet."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Inscription refusée (audit avec motif)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Profil refusé."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/influencers/{id}/suspend": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Suspendre un profil",
+        "operationId": "adminSuspendInfluencer",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "reason": "Contenu hors charte."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profil suspendu et masqué de l’annuaire",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Profil masqué."
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/influencers/{id}/certify": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Certifier un influenceur",
+        "operationId": "adminCertifyInfluencer",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Badge certifié accordé",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Ama Kouassi est maintenant certifié."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/influencers/{id}/scores": {
+      "put": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Mettre à jour les scores",
+        "x-updated": true,
+        "description": "Seul l’admin écrit ces données : l’influenceur ne peut pas les modifier depuis sa vitrine.\n\nTous les champs sont optionnels. Ce qui n’est pas envoyé est conservé.\n\n- `auth`, `brief`, `onTime` : entiers de 0 à 100\n- `creat` : 0 à 5\n- `aud` : `f` = % d’audience féminine, `ages` = 4 parts dans l’ordre `13-17`, `18-24`, `25-34`, `35+`, `cities` = `[ville, %]`\n- `net` : `{ ig|tt|fb|sc: [abonnés, engagement %] }` — **remplace** tous les réseaux\n\nAprès l’appel, le Score PULLUP et `stats` sont recalculés et renvoyés par `GET /influencers/{handle}`, la liste, l’annuaire et l’espace influenceur.",
+        "operationId": "adminUpdateScores",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Identifiant de l’influenceur (pas le handle)",
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "auth": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Authenticité (%)" },
+                  "creat": { "type": "number", "minimum": 0, "maximum": 5, "description": "Créativité sur 5" },
+                  "brief": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Respect des briefs (%)" },
+                  "onTime": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Publications à l’heure (%)" },
+                  "aud": {
+                    "type": "object",
+                    "required": ["f", "ages", "cities"],
+                    "properties": {
+                      "f": { "type": "number", "description": "% d’audience féminine" },
+                      "ages": {
+                        "type": "array",
+                        "items": { "type": "number" },
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "description": "13-17, 18-24, 25-34, 35+"
+                      },
+                      "cities": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {},
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        "description": "[[\"Abidjan\", 60], [\"Autres\", 40]]"
+                      }
+                    }
+                  },
+                  "net": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": { "type": "number" },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "description": "{ \"fb\": [450000, 4] } — abonnés, engagement %"
+                  }
+                }
+              },
+              "examples": {
+                "complet": {
+                  "summary": "Scores, audience et réseaux (profil Kara)",
+                  "value": {
+                    "auth": 90,
+                    "creat": 4,
+                    "brief": 90,
+                    "onTime": 90,
+                    "aud": {
+                      "f": 55,
+                      "ages": [10, 45, 32, 13],
+                      "cities": [
+                        ["Abidjan", 60],
+                        ["Autres", 40]
+                      ]
+                    },
+                    "net": {
+                      "fb": [450000, 4],
+                      "ig": [180000, 4],
+                      "sc": [90000, 4],
+                      "tt": [300000, 4]
+                    }
+                  }
+                },
+                "scores": {
+                  "summary": "Scores seulement",
+                  "value": {
+                    "auth": 94,
+                    "creat": 4.6,
+                    "brief": 96,
+                    "onTime": 98
+                  }
+                },
+                "audience": {
+                  "summary": "Audience seulement",
+                  "value": {
+                    "aud": {
+                      "f": 74,
+                      "ages": [9, 47, 33, 11],
+                      "cities": [
+                        ["Abidjan", 64],
+                        ["Bouaké", 8]
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scores mis à jour. Pour Kara, la vitrine renvoie ensuite `pullupScore: 3.9` et les barres 57 / 90 / 80 / 90 / 90.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Statistiques mises à jour."
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          },
+          "404": {
+            "description": "Influenceur introuvable",
+            "content": {
+              "application/json": {
+                "example": { "message": "Profil introuvable." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/finance/summary": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Synthèse financière",
+        "description": "GMV, séquestre ouvert, commissions, retraits.",
+        "operationId": "adminFinanceSummary",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agrégats en FCFA entiers. `gaps` liste les écarts entre soldes et grand livre (vide si tout est cohérent).",
+            "content": {
+              "application/json": {
+                "example": {
+                  "escrow": 390000,
+                  "commissionsMonth": 97500,
+                  "pendingWithdrawals": 0,
+                  "gaps": []
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/finance/ledger.csv": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Export CSV du grand livre",
+        "operationId": "adminLedgerCsv",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fichier `pullup-grand-livre.csv` (extrait)",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Date,Écriture,Compte,Compte id,Campagne,Sens,Montant FCFA,Libellé\n2026-10-07T17:10:06.768Z,seed-b1,brand_balance,b1,,credit,35000,Solde initial démo\n2026-10-07T17:10:06.768Z,seed-b1,external_psp,psp,,debit,35000,Solde initial démo\n2026-10-07T17:10:06.771Z,d6556dc0-4728-46f5-b42a-1c9664698991,external_psp,psp,c1,debit,90000,Encaissement campagne c1\n2026-10-07T17:10:06.771Z,d6556dc0-4728-46f5-b42a-1c9664698991,escrow,c1,c1,credit,90000,Encaissement campagne c1"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/withdrawals": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Liste des retraits",
+        "operationId": "adminListWithdrawals",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["pending", "sent", "failed"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retraits (plus récents en premier)",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "id": "cmuyd56yu00216ci0nokl203r",
+                    "influencerId": "i1",
+                    "influencer": {
+                      "id": "i1",
+                      "name": "Ama Kouassi",
+                      "handle": "amakouassi"
+                    },
+                    "amount": 50000,
+                    "operator": "om",
+                    "phone": "0700000000",
+                    "status": "sent",
+                    "payoutId": "cmuyd56ys00206ci042ty8go3",
+                    "createdAt": "2026-10-07T17:10:07.494Z"
+                  },
+                  {
+                    "id": "cmuyd56fr001qn6i0ei7c6kvk",
+                    "influencerId": "i1",
+                    "influencer": {
+                      "id": "i1",
+                      "name": "Ama Kouassi",
+                      "handle": "amakouassi"
+                    },
+                    "amount": 50000,
+                    "operator": "om",
+                    "phone": "+225 07 00 00 00 00",
+                    "status": "sent",
+                    "payoutId": "po-seed-i1",
+                    "createdAt": "2026-10-01T10:12:00.000Z"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/withdrawals/{id}/retry": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Relancer un retrait en échec",
+        "operationId": "adminRetryWithdrawal",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relance envoyée au PSP",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Retrait relancé."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          },
+          "422": {
+            "description": "Le retrait n’est pas en échec",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Seuls les retraits échoués peuvent être relancés."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/audit": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Journal d'audit",
+        "operationId": "adminAudit",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Événements d'audit (avant / après, motif, IP)",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "id": "cmuyd571e00296ci0064lxmr6",
+                    "actorUserId": "cmuyd563g0000n6i0l0ft46qd",
+                    "action": "influencer_reject",
+                    "targetType": "Influencer",
+                    "targetId": "i10",
+                    "data": {
+                      "after": {
+                        "status": "rejected"
+                      },
+                      "before": {
+                        "status": "active"
+                      },
+                      "reason": "Profil incomplet."
+                    },
+                    "ip": "::1",
+                    "createdAt": "2026-10-07T17:10:07.586Z"
+                  },
+                  {
+                    "id": "cmuyd571100276ci0gdds6ow7",
+                    "actorUserId": "cmuyd563g0000n6i0l0ft46qd",
+                    "action": "influencer_suspend",
+                    "targetType": "Influencer",
+                    "targetId": "i9",
+                    "data": {
+                      "after": {
+                        "status": "suspended"
+                      },
+                      "before": {
+                        "status": "active"
+                      },
+                      "reason": "Contenu hors charte."
+                    },
+                    "ip": "::1",
+                    "createdAt": "2026-10-07T17:10:07.573Z"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/brands/{id}/credit": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Créditer le solde d'un annonceur",
+        "operationId": "adminCreditBrand",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "b1"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount", "reason"],
+                "properties": {
+                  "amount": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "amount": 50000,
+                "reason": "Geste commercial"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Solde crédité (écriture au grand livre)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "50 000 FCFA crédités."
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/flags/{key}": {
+      "put": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Activer ou couper une option (v2, v3)",
+        "operationId": "adminSetFlag",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "v3"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "value": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Option mise à jour",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "V3 activée sur toute la plateforme."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/campaigns/auto-validate": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Libérer les campagnes publiées depuis 72 h",
+        "operationId": "adminAutoValidate",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résultat du passage",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "validees": {
+                    "summary": "Campagnes libérées",
+                    "value": {
+                      "message": "1 campagne(s) validée(s) automatiquement."
+                    }
+                  },
+                  "aucune": {
+                    "summary": "Rien à valider",
+                    "value": {
+                      "message": "Aucune publication en attente de validation."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenAdmin"
+          }
+        }
+      }
+    },
+    "/admin/catalog": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Lister le catalogue",
+        "x-updated": true,
+        "description": "Catégories, villes, objectifs et types de demande, y compris les éléments masqués.",
+        "operationId": "adminCatalogList",
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Catalogue groupé",
+            "content": {
+              "application/json": {
+                "example": {
+                  "categories": [
+                    {
+                      "kind": "category",
+                      "key": "beaute",
+                      "label": "Mode & beauté",
+                      "related": ["societe", "business", "amour"],
+                      "sortOrder": 1,
+                      "active": true
+                    }
+                  ],
+                  "cities": [
+                    {
+                      "kind": "city",
+                      "key": "Abidjan",
+                      "label": "Abidjan",
+                      "sortOrder": 0,
+                      "active": true
+                    }
+                  ],
+                  "objectives": [
+                    {
+                      "kind": "objective",
+                      "key": "notoriete",
+                      "label": "Notoriété",
+                      "reco": "Campagnes de notoriété",
+                      "sortOrder": 0,
+                      "active": true
+                    }
+                  ],
+                  "contactTypes": [
+                    {
+                      "kind": "contact_type",
+                      "key": "Publicité",
+                      "label": "Publicité",
+                      "sortOrder": 0,
+                      "active": true
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/ForbiddenAdmin" }
+        }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Créer un élément de catalogue",
+        "x-updated": true,
+        "description": "`kind` : `category`, `city`, `objective`, `contact_type`. Pour une catégorie, `key` en minuscules (`cinema`). `related` = clés de thématiques liées.",
+        "operationId": "adminCatalogCreate",
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "categorie": {
+                  "summary": "Nouvelle thématique",
+                  "value": {
+                    "kind": "category",
+                    "key": "cinema",
+                    "label": "Cinéma & séries",
+                    "related": ["actu", "humour"]
+                  }
+                },
+                "ville": {
+                  "summary": "Nouvelle ville",
+                  "value": {
+                    "kind": "city",
+                    "label": "Grand-Bassam"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Élément créé",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Catégorie créée.",
+                  "item": {
+                    "kind": "category",
+                    "key": "cinema",
+                    "label": "Cinéma & séries",
+                    "related": ["actu", "humour"],
+                    "sortOrder": 11,
+                    "active": true
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/ForbiddenAdmin" },
+          "409": {
+            "description": "Clé déjà utilisée",
+            "content": {
+              "application/json": {
+                "example": { "message": "Cette clé existe déjà." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/catalog/{kind}/{key}": {
+      "put": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Modifier un élément de catalogue",
+        "x-updated": true,
+        "operationId": "adminCatalogUpdate",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["category", "city", "objective", "contact_type"]
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "cinema"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "label": "Cinéma, séries & streaming",
+                "related": ["actu", "humour", "societe"],
+                "active": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Élément mis à jour",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Catégorie mise à jour.",
+                  "item": {
+                    "kind": "category",
+                    "key": "cinema",
+                    "label": "Cinéma, séries & streaming",
+                    "related": ["actu", "humour", "societe"],
+                    "sortOrder": 11,
+                    "active": true
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/ForbiddenAdmin" },
+          "404": { "$ref": "#/components/responses/BusinessError" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "[Admin] Masquer un élément de catalogue",
+        "x-updated": true,
+        "description": "Ne supprime pas : `active` passe à `false`. Il doit rester au moins un élément actif par type.",
+        "operationId": "adminCatalogHide",
+        "security": [{ "cookieAuth": [] }],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["category", "city", "objective", "contact_type"]
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Élément masqué",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Catégorie masquée.",
+                  "item": {
+                    "kind": "category",
+                    "key": "cinema",
+                    "label": "Cinéma & séries",
+                    "related": ["actu"],
+                    "sortOrder": 11,
+                    "active": false
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/ForbiddenAdmin" },
+          "404": { "$ref": "#/components/responses/BusinessError" },
+          "409": {
+            "description": "Dernier élément actif",
+            "content": {
+              "application/json": {
+                "example": { "message": "Gardez au moins un élément actif." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["Système"],
+        "summary": "Santé (live / ready)",
+        "responses": {
+          "200": {
+            "description": "Prêt",
+            "content": {
+              "application/json": {
+                "example": {
+                  "live": true,
+                  "ready": true,
+                  "db": "up",
+                  "redis": "up"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "MySQL ou Redis indisponible",
+            "content": {
+              "application/json": {
+                "example": {
+                  "live": true,
+                  "ready": false,
+                  "db": "down",
+                  "redis": "up"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "tags": ["Système"],
+        "summary": "Interface Swagger",
+        "responses": {
+          "200": {
+            "description": "Page HTML Swagger UI",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "<!doctype html><html lang=\"fr\">…</html>"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docs/openapi.json": {
+      "get": {
+        "tags": ["Système"],
+        "summary": "Spécification OpenAPI",
+        "responses": {
+          "200": {
+            "description": "Spécification OpenAPI",
+            "content": {
+              "application/json": {
+                "example": {
+                  "openapi": "3.0.3",
+                  "info": {
+                    "title": "PULLUP API",
+                    "version": "1.0.0"
+                  },
+                  "paths": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["Système"],
+        "summary": "Métriques Prometheus",
+        "responses": {
+          "200": {
+            "description": "Format texte Prometheus (extrait)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "# HELP pullup_http_request_duration_ms Latence moyenne par requête\n# TYPE pullup_http_request_duration_ms gauge\npullup_http_request_duration_ms 28\n# HELP http_requests_total Requêtes HTTP par route et statut\n# TYPE http_requests_total counter\n# HELP pullup_payments_total Paiements par statut\n# TYPE pullup_payments_total counter\n# HELP pullup_queue_jobs Jobs en file (BullMQ / file interne)\n# TYPE pullup_queue_jobs gauge"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Session courante",
+        "responses": {
+          "200": {
+            "description": "Session courante ou `null`",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "annonceur": {
+                    "summary": "Annonceur connecté",
+                    "value": {
+                      "role": "brand",
+                      "id": "b1",
+                      "name": "Savane Cosmetics",
+                      "email": "marketing@savane.ci",
+                      "contact": "Aïcha Diomandé",
+                      "plan": "pro",
+                      "avatar": {
+                        "name": "Savane Cosmetics",
+                        "hue": 20
+                      }
+                    }
+                  },
+                  "visiteur": {
+                    "summary": "Pas de cookie",
+                    "value": null
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Connexion",
+        "description": "Pose le cookie `pullup.sid`. Pour tester les routes Admin, utilisez `admin@pullup.net`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "admin@pullup.net",
+                "password": "(DEMO_PASSWORD)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session + cookie `pullup.sid`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "session": {
+                    "role": "brand",
+                    "id": "b1",
+                    "name": "Savane Cosmetics",
+                    "email": "marketing@savane.ci",
+                    "contact": "Aïcha Diomandé",
+                    "plan": "pro",
+                    "avatar": {
+                      "name": "Savane Cosmetics",
+                      "hue": 20
+                    }
+                  },
+                  "message": "Connecté : Savane Cosmetics"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "description": "Mauvais e-mail ou mot de passe",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Identifiants incorrects."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Déconnexion",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cookie invalidé",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Déconnecté."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/signup/brand": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Inscription annonceur",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "company": "Savane Cosmetics",
+                "contact": "Aïcha Diomandé",
+                "email": "nouveau@marque.ci",
+                "password": "au-moins-8"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compte créé + session",
+            "content": {
+              "application/json": {
+                "example": {
+                  "session": {
+                    "role": "brand",
+                    "id": "cmuyd573d002f6ci0soq6dq5q",
+                    "name": "Boutique Test",
+                    "email": "test1791393007623@marque.ci",
+                    "contact": "Awa Test",
+                    "plan": "free",
+                    "avatar": {
+                      "name": "Boutique Test",
+                      "hue": 20
+                    }
+                  },
+                  "message": "Bienvenue sur PULLUP, Awa !"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/auth/signup/influencer": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Inscription influenceur",
+        "x-updated": true,
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Ama Kouassi",
+                "handle": "amakouassi2",
+                "email": "ama2@mail.ci",
+                "password": "au-moins-8",
+                "city": "Abidjan",
+                "cats": ["beaute"],
+                "nets": {
+                  "ig": 10000
+                },
+                "accepts": {
+                  "pub": true,
+                  "partenariat": true,
+                  "dedicace": false
+                },
+                "price": 25000
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compte créé + session (profil en attente de vérification)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "session": {
+                    "role": "influencer",
+                    "id": "cmuyd574k002i6ci0z8c317fx",
+                    "name": "Ama Test",
+                    "email": "ama1791393007671@mail.ci",
+                    "handle": "amatest7671",
+                    "avatar": {
+                      "name": "Ama Test",
+                      "hue": 6,
+                      "photo": null,
+                      "verified": false
+                    }
+                  },
+                  "message": "Vitrine créée ! Vérification sous 48 h."
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/auth/handle": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Disponibilité d'un handle",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "amakouassi"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Disponibilité",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "pris": {
+                    "summary": "Handle déjà utilisé",
+                    "value": {
+                      "available": false
+                    }
+                  },
+                  "libre": {
+                    "summary": "Handle libre",
+                    "value": {
+                      "available": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/demo": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Connexion démo (DEMO_MODE)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "role": "admin",
+                "id": "admin"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session démo (DEMO_MODE=true uniquement)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "session": {
+                    "role": "brand",
+                    "id": "b1",
+                    "name": "Savane Cosmetics",
+                    "email": "marketing@savane.ci",
+                    "contact": "Aïcha Diomandé",
+                    "plan": "pro",
+                    "avatar": {
+                      "name": "Savane Cosmetics",
+                      "hue": 20
+                    }
+                  },
+                  "message": "Connecté : Savane Cosmetics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/forgot": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Demander une réinitialisation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "amakouassi@mail.ci"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Réponse identique que le compte existe ou non",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Si un compte existe, un e-mail vient d'être envoyé."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/reset": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Réinitialiser le mot de passe",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "token": "…",
+                "password": "nouveau-mot-de-passe"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mot de passe mis à jour",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Mot de passe modifié."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Lien expiré ou invalide",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Ce lien n’est plus valable."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "delete": {
+        "tags": ["Auth"],
+        "summary": "Supprimer mon compte",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "password": "(DEMO_PASSWORD)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compte anonymisé, session fermée",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Compte supprimé."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Mot de passe incorrect",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Identifiants incorrects."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/export": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Export RGPD de mes données",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Export RGPD (JSON du compte)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "user": {
+                    "id": "cmuyd564e0004n6i0ictceaxz",
+                    "email": "amakouassi@mail.ci",
+                    "role": "influencer",
+                    "createdAt": "2026-10-07T17:10:06.398Z"
+                  },
+                  "brand": null,
+                  "influencer": {
+                    "id": "i1",
+                    "handle": "amakouassi",
+                    "name": "Ama Kouassi",
+                    "phone": "+225 07 00 00 00 00",
+                    "city": "Abidjan · Cocody"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/preferences": {
+      "put": {
+        "tags": ["Plateforme"],
+        "summary": "Terminer l'onboarding",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "onboarded": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Préférence enregistrée",
+            "content": {
+              "application/json": {
+                "example": null
+              }
+            }
+          }
+        }
+      }
+    },
+    "/catalog": {
+      "get": {
+        "tags": ["Plateforme"],
+        "summary": "Catalogue public (catégories, villes, objectifs)",
+        "x-updated": true,
+        "description": "Éléments **actifs** gérés par l’admin. À utiliser pour les listes d’inscription, matching et brief.",
+        "operationId": "catalogSnapshot",
+        "responses": {
+          "200": {
+            "description": "Référentiels actifs",
+            "content": {
+              "application/json": {
+                "example": {
+                  "cats": {
+                    "humour": "Humour & divertissement",
+                    "beaute": "Mode & beauté",
+                    "cinema": "Cinéma & séries"
+                  },
+                  "related": {
+                    "beaute": ["societe", "business", "amour"],
+                    "cinema": ["actu", "humour"]
+                  },
+                  "cities": [
+                    "Abidjan",
+                    "Bouaké",
+                    "Yamoussoukro",
+                    "San-Pédro",
+                    "Daloa",
+                    "Korhogo"
+                  ],
+                  "obj": {
+                    "notoriete": "Notoriété",
+                    "engagement": "Engagement",
+                    "trafic": "Trafic",
+                    "conversion": "Conversion"
+                  },
+                  "reco": {
+                    "notoriete": "Campagnes de notoriété"
+                  },
+                  "contactTypes": ["Publicité", "Partenariat", "Dédicace"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/platform": {
+      "get": {
+        "tags": ["Plateforme"],
+        "summary": "Snapshot (flags, session, notifications)",
+        "responses": {
+          "200": {
+            "description": "Flags + état d’onboarding",
+            "content": {
+              "application/json": {
+                "example": {
+                  "flags": {
+                    "v2": true,
+                    "v3": true
+                  },
+                  "onboarded": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": ["Plateforme"],
+        "summary": "Mes notifications",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifications (plus récentes en premier)",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "to": "i1",
+                    "t": "Nouvelle campagne de Savane Cosmetics : 90 000 FCFA bloqués en séquestre. Acceptez-la sous 72 h.",
+                    "at": "2026-10-06T10:12:00.000Z",
+                    "r": false,
+                    "link": "/c/c1"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/read": {
+      "post": {
+        "tags": ["Plateforme"],
+        "summary": "Marquer les notifications lues",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Toutes marquées lues",
+            "content": {
+              "application/json": {
+                "example": null
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers": {
+      "get": {
+        "tags": ["Influenceurs"],
+        "summary": "Lister les profils",
+        "x-updated": true,
+        "parameters": [
+          {
+            "name": "s",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cat",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "beaute"
+            }
+          },
+          {
+            "name": "net",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "ig"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["score", "plus", "moins", "prix", "eng"]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page de profils (`nextCursor` = `null` en fin de liste)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "id": "i1",
+                      "handle": "amakouassi",
+                      "name": "Ama Kouassi",
+                      "city": "Abidjan · Cocody",
+                      "cats": ["beaute", "societe"],
+                      "bio": "Je partage mes routines beauté, mes bons plans mode et la vie à Abidjan. Audience à 74 % féminine, très active en story.",
+                      "net": {
+                        "fb": [96000, 2.1],
+                        "ig": [412000, 5.8],
+                        "tt": [268000, 7.4]
+                      },
+                      "aud": {
+                        "f": 74,
+                        "ages": [9, 47, 33, 11],
+                        "cities": [
+                          ["Abidjan", 64],
+                          ["Bouaké", 8]
+                        ]
+                      },
+                      "auth": 94,
+                      "creat": 4.6,
+                      "brief": 96,
+                      "onTime": 98,
+                      "rating": 4.8,
+                      "reviews": 61,
+                      "done": 47,
+                      "rates": [
+                        {
+                          "id": "i1r0",
+                          "net": "ig",
+                          "fmt": "Story (24 h)",
+                          "price": 35000
+                        },
+                        {
+                          "id": "i1r1",
+                          "net": "ig",
+                          "fmt": "Post + carrousel",
+                          "price": 90000
+                        }
+                      ],
+                      "days": ["Lun", "Jeu"],
+                      "verified": true,
+                      "certified": true,
+                      "featured": false,
+                      "analytics": false,
+                      "status": "active",
+                      "accepts": {
+                        "pub": true,
+                        "partenariat": true,
+                        "dedicace": true
+                      },
+                      "views": [378, 319, 366, 364, 345, 401, 318],
+                      "qr": 821,
+                      "contacts": 106,
+                      "hue": 47,
+                      "photo": null,
+                      "favorite": false
+                    },
+                    {
+                      "id": "i13",
+                      "handle": "reine.makeup",
+                      "name": "Reine Kacou",
+                      "city": "Abidjan · Yopougon",
+                      "cats": ["beaute", "amour"],
+                      "bio": "Maquilleuse professionnelle. Tutos make-up pour peaux noires, mariages et looks de soirée à petit prix.",
+                      "net": {
+                        "ig": [285000, 6.1],
+                        "tt": [410000, 8.3]
+                      },
+                      "aud": {
+                        "f": 86,
+                        "ages": [11, 50, 30, 9],
+                        "cities": [
+                          ["Abidjan", 66],
+                          ["Bouaké", 7]
+                        ]
+                      },
+                      "auth": 93,
+                      "creat": 4.7,
+                      "brief": 94,
+                      "onTime": 95,
+                      "rating": 4.7,
+                      "reviews": 41,
+                      "done": 33,
+                      "rates": [
+                        {
+                          "id": "i13r0",
+                          "net": "tt",
+                          "fmt": "Tuto sponsorisé",
+                          "price": 110000
+                        },
+                        {
+                          "id": "i13r1",
+                          "net": "ig",
+                          "fmt": "Story (24 h)",
+                          "price": 30000
+                        }
+                      ],
+                      "days": ["Mar", "Jeu"],
+                      "verified": true,
+                      "certified": false,
+                      "featured": false,
+                      "analytics": false,
+                      "status": "active",
+                      "accepts": {
+                        "pub": true,
+                        "partenariat": true,
+                        "dedicace": false
+                      },
+                      "views": [281, 455, 289, 462, 351, 457, 408],
+                      "qr": 936,
+                      "contacts": 121,
+                      "hue": 251,
+                      "photo": null,
+                      "favorite": false
+                    }
+                  ],
+                  "nextCursor": 2,
+                  "total": 4
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers/directory": {
+      "get": {
+        "tags": ["Influenceurs"],
+        "summary": "Annuaire",
+        "x-updated": true,
+        "responses": {
+          "200": {
+            "description": "Statistiques de l’annuaire + profil mis en avant",
+            "content": {
+              "application/json": {
+                "example": {
+                  "followers": 11839000,
+                  "verified": 16,
+                  "perNetwork": {
+                    "ig": 13,
+                    "tt": 16,
+                    "fb": 12,
+                    "sc": 2
+                  },
+                  "featured": {
+                    "id": "i13",
+                    "handle": "reine.makeup",
+                    "name": "Reine Kacou",
+                    "city": "Abidjan · Yopougon",
+                    "cats": ["beaute", "amour"],
+                    "bio": "Maquilleuse professionnelle. Tutos make-up pour peaux noires, mariages et looks de soirée à petit prix.",
+                    "net": {
+                      "ig": [285000, 6.1],
+                      "tt": [410000, 8.3]
+                    },
+                    "aud": {
+                      "f": 86,
+                      "ages": [11, 50, 30, 9],
+                      "cities": [
+                        ["Abidjan", 66],
+                        ["Bouaké", 7]
+                      ]
+                    },
+                    "auth": 93,
+                    "creat": 4.7,
+                    "brief": 94,
+                    "onTime": 95,
+                    "rating": 4.7,
+                    "reviews": 41,
+                    "done": 33,
+                    "rates": [
+                      {
+                        "id": "i13r0",
+                        "net": "tt",
+                        "fmt": "Tuto sponsorisé",
+                        "price": 110000
+                      },
+                      {
+                        "id": "i13r1",
+                        "net": "ig",
+                        "fmt": "Story (24 h)",
+                        "price": 30000
+                      }
+                    ],
+                    "days": ["Mar", "Jeu"],
+                    "verified": true,
+                    "certified": false,
+                    "featured": false,
+                    "analytics": false,
+                    "status": "active",
+                    "accepts": {
+                      "pub": true,
+                      "partenariat": true,
+                      "dedicace": false
+                    },
+                    "views": [281, 455, 289, 462, 351, 457, 408],
+                    "qr": 936,
+                    "contacts": 121,
+                    "hue": 251,
+                    "photo": null,
+                    "favorite": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers/carousel": {
+      "get": {
+        "tags": ["Influenceurs"],
+        "summary": "Carrousel d'accueil",
+        "x-updated": true,
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "reco"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sélection du carrousel",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "id": "i1",
+                    "handle": "amakouassi",
+                    "name": "Ama Kouassi",
+                    "city": "Abidjan · Cocody",
+                    "cats": ["beaute", "societe"],
+                    "bio": "Je partage mes routines beauté, mes bons plans mode et la vie à Abidjan. Audience à 74 % féminine, très active en story.",
+                    "net": {
+                      "fb": [96000, 2.1],
+                      "ig": [412000, 5.8],
+                      "tt": [268000, 7.4]
+                    },
+                    "aud": {
+                      "f": 74,
+                      "ages": [9, 47, 33, 11],
+                      "cities": [
+                        ["Abidjan", 64],
+                        ["Bouaké", 8]
+                      ]
+                    },
+                    "auth": 94,
+                    "creat": 4.6,
+                    "brief": 96,
+                    "onTime": 98,
+                    "rating": 4.8,
+                    "reviews": 61,
+                    "done": 47,
+                    "rates": [
+                      {
+                        "id": "i1r0",
+                        "net": "ig",
+                        "fmt": "Story (24 h)",
+                        "price": 35000
+                      },
+                      {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      }
+                    ],
+                    "days": ["Lun", "Jeu"],
+                    "verified": true,
+                    "certified": true,
+                    "featured": false,
+                    "analytics": false,
+                    "status": "active",
+                    "accepts": {
+                      "pub": true,
+                      "partenariat": true,
+                      "dedicace": true
+                    },
+                    "views": [378, 319, 366, 364, 345, 401, 318],
+                    "qr": 821,
+                    "contacts": 106,
+                    "hue": 47,
+                    "photo": null,
+                    "favorite": false
+                  },
+                  {
+                    "id": "i3",
+                    "handle": "yaotech",
+                    "name": "Yao Tech",
+                    "city": "Abidjan · Plateau",
+                    "cats": ["tech", "business"],
+                    "bio": "Tests de smartphones, applis et services numériques made in Africa. Je vulgarise la tech pour tout le monde.",
+                    "net": {
+                      "fb": [52000, 2.6],
+                      "ig": [74000, 4.4],
+                      "tt": [186000, 6.9]
+                    },
+                    "aud": {
+                      "f": 28,
+                      "ages": [11, 44, 35, 10],
+                      "cities": [
+                        ["Abidjan", 71],
+                        ["San-Pédro", 6]
+                      ]
+                    },
+                    "auth": 97,
+                    "creat": 4.4,
+                    "brief": 99,
+                    "onTime": 100,
+                    "rating": 4.9,
+                    "reviews": 34,
+                    "done": 29,
+                    "rates": [
+                      {
+                        "id": "i3r0",
+                        "net": "tt",
+                        "fmt": "Test produit (vidéo)",
+                        "price": 90000
+                      },
+                      {
+                        "id": "i3r1",
+                        "net": "ig",
+                        "fmt": "Post + story",
+                        "price": 60000
+                      }
+                    ],
+                    "days": ["Mer", "Sam"],
+                    "verified": true,
+                    "certified": true,
+                    "featured": false,
+                    "analytics": false,
+                    "status": "active",
+                    "accepts": {
+                      "pub": true,
+                      "partenariat": true,
+                      "dedicace": false
+                    },
+                    "views": [296, 250, 287, 285, 270, 314, 249],
+                    "qr": 643,
+                    "contacts": 83,
+                    "hue": 141,
+                    "photo": null,
+                    "favorite": false
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers/{handle}": {
+      "get": {
+        "tags": ["Influenceurs"],
+        "summary": "Profil public",
+        "x-updated": true,
+        "description": "L’objet `influencer` inclut `pullupScore` et `stats` (réseaux, audience, âges, genre, barres). Le front affiche ces champs tels quels.",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "amakouassi"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fiche publique",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "trouve": {
+                    "summary": "Profil existant",
+                    "value": {
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "city": "Abidjan · Cocody",
+                        "cats": ["beaute", "societe"],
+                        "bio": "Je partage mes routines beauté, mes bons plans mode et la vie à Abidjan. Audience à 74 % féminine, très active en story.",
+                        "net": {
+                          "fb": [96000, 2.1],
+                          "ig": [412000, 5.8],
+                          "tt": [268000, 7.4]
+                        },
+                        "aud": {
+                          "f": 74,
+                          "ages": [9, 47, 33, 11],
+                          "cities": [
+                            ["Abidjan", 64],
+                            ["Bouaké", 8]
+                          ]
+                        },
+                        "auth": 94,
+                        "creat": 4.6,
+                        "brief": 96,
+                        "onTime": 98,
+                        "rating": 4.8,
+                        "reviews": 61,
+                        "done": 47,
+                        "rates": [
+                          {
+                            "id": "i1r0",
+                            "net": "ig",
+                            "fmt": "Story (24 h)",
+                            "price": 35000
+                          },
+                          {
+                            "id": "i1r1",
+                            "net": "ig",
+                            "fmt": "Post + carrousel",
+                            "price": 90000
+                          }
+                        ],
+                        "days": ["Lun", "Jeu"],
+                        "verified": true,
+                        "certified": true,
+                        "featured": false,
+                        "analytics": false,
+                        "status": "active",
+                        "accepts": {
+                          "pub": true,
+                          "partenariat": true,
+                          "dedicace": true
+                        },
+                        "views": [378, 319, 366, 364, 345, 401, 318],
+                        "qr": 821,
+                        "contacts": 106,
+                        "hue": 47,
+                        "photo": null,
+                        "favorite": false,
+                        "pullupScore": 4.6,
+                        "stats": {
+                          "networks": [
+                            { "key": "fb", "label": "Facebook", "followers": 96000, "engagement": 2.1 },
+                            { "key": "ig", "label": "Instagram", "followers": 412000, "engagement": 5.8 },
+                            { "key": "tt", "label": "TikTok", "followers": 268000, "engagement": 7.4 }
+                          ],
+                          "audience": {
+                            "cities": [
+                              { "label": "Abidjan", "value": 64 },
+                              { "label": "Bouaké", "value": 8 }
+                            ],
+                            "ages": [
+                              { "label": "13-17 ans", "value": 9 },
+                              { "label": "18-24 ans", "value": 47 },
+                              { "label": "25-34 ans", "value": 33 },
+                              { "label": "35+ ans", "value": 11 }
+                            ],
+                            "gender": { "women": 74, "men": 26 }
+                          },
+                          "score": {
+                            "value": 4.6,
+                            "bars": [
+                              { "key": "engagement", "label": "Engagement", "value": 84 },
+                              { "key": "auth", "label": "Authenticité", "value": 94 },
+                              { "key": "creat", "label": "Créativité", "value": 92 },
+                              { "key": "brief", "label": "Briefs", "value": 96 },
+                              { "key": "onTime", "label": "Délais", "value": 98 }
+                            ],
+                            "done": 47,
+                            "onTime": 98,
+                            "caption": "47 campagnes réalisées sur PULLUP · 98 % publiées à l'heure · audience auditée quotidiennement."
+                          }
+                        }
+                      },
+                      "own": false,
+                      "reviews": [
+                        {
+                          "brand": "Boutique Nana Wax",
+                          "stars": 5,
+                          "text": "Story très soignée, nos ventes en ligne ont doublé le week-end suivant.",
+                          "at": "2026-08-28T17:10:06.686Z"
+                        },
+                        {
+                          "brand": "Glow Hair Abidjan",
+                          "stars": 4,
+                          "text": "Contenu de qualité, publié avec un jour de retard mais bien prévenu.",
+                          "at": "2026-07-29T17:10:06.686Z"
+                        }
+                      ],
+                      "recent": []
+                    }
+                  },
+                  "inconnu": {
+                    "summary": "Handle inconnu ou profil masqué",
+                    "value": null
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers/{id}/visits": {
+      "post": {
+        "tags": ["Influenceurs"],
+        "summary": "Enregistrer une visite de profil",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visite comptée",
+            "content": {
+              "application/json": {
+                "example": null
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers/{id}/favorite": {
+      "post": {
+        "tags": ["Influenceurs"],
+        "summary": "Ajouter / retirer des favoris (annonceur)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i3"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Favori basculé",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "ajoute": {
+                    "summary": "Ajouté",
+                    "value": {
+                      "favorite": true,
+                      "message": "Ajouté à votre sélection."
+                    }
+                  },
+                  "retire": {
+                    "summary": "Retiré",
+                    "value": {
+                      "favorite": false,
+                      "message": "Retiré de votre sélection."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/influencers/{id}/requests": {
+      "post": {
+        "tags": ["Influenceurs"],
+        "summary": "Demande de contact / partenariat",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "from": "Boutique Nana Wax",
+                "contact": "+225 07 48 22 19 03",
+                "msg": "Partenariat 3 mois pour la nouvelle collection.",
+                "type": "Partenariat"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Demande enregistrée",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Demande envoyée."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Champ invalide",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Le message doit contenir entre 10 et 1 000 caractères."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/influencers/{id}/vitrine": {
+      "put": {
+        "tags": ["Influenceurs"],
+        "summary": "Modifier sa vitrine (influenceur)",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vitrine mise à jour",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Vitrine enregistrée."
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/influencers/{id}/photo": {
+      "put": {
+        "tags": ["Influenceurs"],
+        "summary": "Photo de profil",
+        "description": "L'admin doit envoyer `consent: true` (accord écrit de l'influenceur).",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "i1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "photo": "data:image/jpeg;base64,…",
+                "consent": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Photo enregistrée ou retirée",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "maj": {
+                    "summary": "Nouvelle photo",
+                    "value": {
+                      "message": "Photo mise à jour."
+                    }
+                  },
+                  "retrait": {
+                    "summary": "`photo: null`",
+                    "value": {
+                      "message": "Photo retirée."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Admin sans `consent: true`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "L'accord écrit de l'influenceur (droit à l'image) est obligatoire."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/matching": {
+      "post": {
+        "tags": ["Matching"],
+        "summary": "Matching V3",
+        "description": "Flag `v3`. Les formules `free` / visiteur voient des résultats `masked`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "theme": "beaute",
+                "objective": "notoriete",
+                "net": "ig",
+                "budget": 100000,
+                "city": "Abidjan",
+                "gender": "f"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Classement",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "pro": {
+                    "summary": "Formule Pro / Business : métriques visibles",
+                    "value": {
+                      "results": [
+                        {
+                          "influencer": {
+                            "id": "i4",
+                            "handle": "fatoubamba.fit",
+                            "name": "Fatou Bamba",
+                            "city": "Abidjan · Marcory",
+                            "cats": ["sport", "beaute"],
+                            "bio": "Coach sportive certifiée. Programmes maison, nutrition locale et motivation au quotidien.",
+                            "net": {
+                              "ig": [158000, 6.2],
+                              "tt": [121000, 8]
+                            },
+                            "aud": {
+                              "f": 68,
+                              "ages": [6, 41, 39, 14],
+                              "cities": [
+                                ["Abidjan", 60],
+                                ["Grand-Bassam", 9]
+                              ]
+                            },
+                            "auth": 95,
+                            "creat": 4.3,
+                            "brief": 97,
+                            "onTime": 97,
+                            "rating": 4.7,
+                            "reviews": 22,
+                            "done": 18,
+                            "rates": [
+                              {
+                                "id": "i4r0",
+                                "net": "ig",
+                                "fmt": "Story (24 h)",
+                                "price": 20000
+                              },
+                              {
+                                "id": "i4r1",
+                                "net": "ig",
+                                "fmt": "Reel sponsorisé",
+                                "price": 70000
+                              }
+                            ],
+                            "days": ["Lun", "Mer"],
+                            "verified": true,
+                            "certified": false,
+                            "featured": false,
+                            "analytics": false,
+                            "status": "active",
+                            "accepts": {
+                              "pub": true,
+                              "partenariat": true,
+                              "dedicace": false
+                            },
+                            "views": [210, 177, 203, 202, 192, 223, 177],
+                            "qr": 456,
+                            "contacts": 59,
+                            "hue": 188,
+                            "photo": null,
+                            "favorite": false
+                          },
+                          "s": 0.9046000000000001,
+                          "note": 4.8,
+                          "reach": 56989,
+                          "interactions": 3962,
+                          "price": 20000,
+                          "inBudget": true,
+                          "why": [
+                            "Thématique alignée : Mode & beauté",
+                            "Engagement de 6,2 % sur Instagram"
+                          ],
+                          "bestNet": "ig",
+                          "reco": "Campagnes de notoriété",
+                          "cpm": 350.94491919493237
+                        },
+                        {
+                          "influencer": {
+                            "id": "i13",
+                            "handle": "reine.makeup",
+                            "name": "Reine Kacou",
+                            "city": "Abidjan · Yopougon",
+                            "cats": ["beaute", "amour"],
+                            "bio": "Maquilleuse professionnelle. Tutos make-up pour peaux noires, mariages et looks de soirée à petit prix.",
+                            "net": {
+                              "ig": [285000, 6.1],
+                              "tt": [410000, 8.3]
+                            },
+                            "aud": {
+                              "f": 86,
+                              "ages": [11, 50, 30, 9],
+                              "cities": [
+                                ["Abidjan", 66],
+                                ["Bouaké", 7]
+                              ]
+                            },
+                            "auth": 93,
+                            "creat": 4.7,
+                            "brief": 94,
+                            "onTime": 95,
+                            "rating": 4.7,
+                            "reviews": 41,
+                            "done": 33,
+                            "rates": [
+                              {
+                                "id": "i13r0",
+                                "net": "tt",
+                                "fmt": "Tuto sponsorisé",
+                                "price": 110000
+                              },
+                              {
+                                "id": "i13r1",
+                                "net": "ig",
+                                "fmt": "Story (24 h)",
+                                "price": 30000
+                              }
+                            ],
+                            "days": ["Mar", "Jeu"],
+                            "verified": true,
+                            "certified": false,
+                            "featured": false,
+                            "analytics": false,
+                            "status": "active",
+                            "accepts": {
+                              "pub": true,
+                              "partenariat": true,
+                              "dedicace": false
+                            },
+                            "views": [281, 455, 289, 462, 351, 457, 408],
+                            "qr": 936,
+                            "contacts": 121,
+                            "hue": 251,
+                            "photo": null,
+                            "favorite": true
+                          },
+                          "s": 0.9012500000000001,
+                          "note": 4.8,
+                          "reach": 102653,
+                          "interactions": 7016,
+                          "price": 30000,
+                          "inBudget": true,
+                          "why": [
+                            "Thématique alignée : Mode & beauté",
+                            "Engagement de 6,1 % sur Instagram"
+                          ],
+                          "bestNet": "ig",
+                          "reco": "Campagnes de notoriété",
+                          "cpm": 292.24669517695537
+                        }
+                      ],
+                      "plan": "pro"
+                    }
+                  },
+                  "visiteur": {
+                    "summary": "Visiteur ou Free : `reach`, `interactions`, `cpm` masqués",
+                    "value": {
+                      "results": [
+                        {
+                          "influencer": {
+                            "id": "i4",
+                            "handle": "fatoubamba.fit",
+                            "name": "Fatou Bamba",
+                            "city": "Abidjan · Marcory",
+                            "cats": ["sport", "beaute"],
+                            "bio": "Coach sportive certifiée. Programmes maison, nutrition locale et motivation au quotidien.",
+                            "net": {
+                              "ig": [158000, 6.2],
+                              "tt": [121000, 8]
+                            },
+                            "aud": {
+                              "f": 68,
+                              "ages": [6, 41, 39, 14],
+                              "cities": [
+                                ["Abidjan", 60],
+                                ["Grand-Bassam", 9]
+                              ]
+                            },
+                            "auth": 95,
+                            "creat": 4.3,
+                            "brief": 97,
+                            "onTime": 97,
+                            "rating": 4.7,
+                            "reviews": 22,
+                            "done": 18,
+                            "rates": [
+                              {
+                                "id": "i4r0",
+                                "net": "ig",
+                                "fmt": "Story (24 h)",
+                                "price": 20000
+                              },
+                              {
+                                "id": "i4r1",
+                                "net": "ig",
+                                "fmt": "Reel sponsorisé",
+                                "price": 70000
+                              }
+                            ],
+                            "days": ["Lun", "Mer"],
+                            "verified": true,
+                            "certified": false,
+                            "featured": false,
+                            "analytics": false,
+                            "status": "active",
+                            "accepts": {
+                              "pub": true,
+                              "partenariat": true,
+                              "dedicace": false
+                            },
+                            "views": [210, 177, 203, 202, 192, 223, 177],
+                            "qr": 456,
+                            "contacts": 59,
+                            "hue": 188,
+                            "photo": null,
+                            "favorite": false
+                          },
+                          "s": 0.9046000000000001,
+                          "note": 4.8,
+                          "reach": null,
+                          "interactions": null,
+                          "price": 20000,
+                          "inBudget": true,
+                          "why": [
+                            "Thématique alignée : Mode & beauté",
+                            "Engagement de 6,2 % sur Instagram"
+                          ],
+                          "bestNet": "ig",
+                          "reco": "Campagnes de notoriété",
+                          "cpm": null
+                        },
+                        {
+                          "influencer": {
+                            "id": "i13",
+                            "handle": "reine.makeup",
+                            "name": "Reine Kacou",
+                            "city": "Abidjan · Yopougon",
+                            "cats": ["beaute", "amour"],
+                            "bio": "Maquilleuse professionnelle. Tutos make-up pour peaux noires, mariages et looks de soirée à petit prix.",
+                            "net": {
+                              "ig": [285000, 6.1],
+                              "tt": [410000, 8.3]
+                            },
+                            "aud": {
+                              "f": 86,
+                              "ages": [11, 50, 30, 9],
+                              "cities": [
+                                ["Abidjan", 66],
+                                ["Bouaké", 7]
+                              ]
+                            },
+                            "auth": 93,
+                            "creat": 4.7,
+                            "brief": 94,
+                            "onTime": 95,
+                            "rating": 4.7,
+                            "reviews": 41,
+                            "done": 33,
+                            "rates": [
+                              {
+                                "id": "i13r0",
+                                "net": "tt",
+                                "fmt": "Tuto sponsorisé",
+                                "price": 110000
+                              },
+                              {
+                                "id": "i13r1",
+                                "net": "ig",
+                                "fmt": "Story (24 h)",
+                                "price": 30000
+                              }
+                            ],
+                            "days": ["Mar", "Jeu"],
+                            "verified": true,
+                            "certified": false,
+                            "featured": false,
+                            "analytics": false,
+                            "status": "active",
+                            "accepts": {
+                              "pub": true,
+                              "partenariat": true,
+                              "dedicace": false
+                            },
+                            "views": [281, 455, 289, 462, 351, 457, 408],
+                            "qr": 936,
+                            "contacts": 121,
+                            "hue": 251,
+                            "photo": null,
+                            "favorite": false
+                          },
+                          "s": 0.9012500000000001,
+                          "note": 4.8,
+                          "reach": null,
+                          "interactions": null,
+                          "price": 30000,
+                          "inBudget": true,
+                          "why": [
+                            "Thématique alignée : Mode & beauté",
+                            "Engagement de 6,1 % sur Instagram"
+                          ],
+                          "bestNet": "ig",
+                          "reco": "Campagnes de notoriété",
+                          "cpm": null
+                        }
+                      ],
+                      "plan": null
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/booking/{handle}": {
+      "get": {
+        "tags": ["Campagnes"],
+        "summary": "Page de réservation V2",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "amakouassi"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profil + solde disponible de l’annonceur",
+            "content": {
+              "application/json": {
+                "example": {
+                  "influencer": {
+                    "id": "i1",
+                    "handle": "amakouassi",
+                    "name": "Ama Kouassi",
+                    "city": "Abidjan · Cocody",
+                    "cats": ["beaute", "societe"],
+                    "bio": "Je partage mes routines beauté, mes bons plans mode et la vie à Abidjan. Audience à 74 % féminine, très active en story.",
+                    "net": {
+                      "fb": [96000, 2.1],
+                      "ig": [412000, 5.8],
+                      "tt": [268000, 7.4]
+                    },
+                    "aud": {
+                      "f": 74,
+                      "ages": [9, 47, 33, 11],
+                      "cities": [
+                        ["Abidjan", 64],
+                        ["Bouaké", 8]
+                      ]
+                    },
+                    "auth": 94,
+                    "creat": 4.6,
+                    "brief": 96,
+                    "onTime": 98,
+                    "rating": 4.8,
+                    "reviews": 61,
+                    "done": 47,
+                    "rates": [
+                      {
+                        "id": "i1r0",
+                        "net": "ig",
+                        "fmt": "Story (24 h)",
+                        "price": 35000
+                      },
+                      {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      }
+                    ],
+                    "days": ["Lun", "Jeu"],
+                    "verified": true,
+                    "certified": true,
+                    "featured": false,
+                    "analytics": false,
+                    "status": "active",
+                    "accepts": {
+                      "pub": true,
+                      "partenariat": true,
+                      "dedicace": true
+                    },
+                    "views": [378, 319, 366, 364, 345, 401, 318],
+                    "qr": 821,
+                    "contacts": 107,
+                    "hue": 47,
+                    "photo": null,
+                    "favorite": false
+                  },
+                  "balance": 35000
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/uploads/brief": {
+      "post": {
+        "tags": ["Campagnes"],
+        "summary": "URL présignée pour pièce jointe du brief",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "filename": "moodboard.pdf",
+                "mime": "application/pdf",
+                "size": 120000
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "URL présignée",
+            "content": {
+              "application/json": {
+                "example": {
+                  "uploadUrl": "https://cdn.pullup.local/briefs/cmuyd563m0001n6i00dekt7eo/4a8404d44042b6cf/moodboard.pdf",
+                  "fileUrl": "https://cdn.pullup.local/briefs/cmuyd563m0001n6i00dekt7eo/4a8404d44042b6cf/moodboard.pdf"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns": {
+      "get": {
+        "tags": ["Campagnes"],
+        "summary": "Mes campagnes",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campagnes visibles pour le rôle connecté",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "id": "c1",
+                    "ref": "PU-2410-137",
+                    "brandId": "b1",
+                    "infId": "i1",
+                    "offer": {
+                      "id": "i1r1",
+                      "net": "ig",
+                      "fmt": "Post + carrousel",
+                      "price": 90000
+                    },
+                    "amount": 90000,
+                    "fee": 13500,
+                    "payout": 76500,
+                    "status": "paid",
+                    "createdAt": "2026-10-06T10:12:00.000Z",
+                    "pay": "om",
+                    "brief": {
+                      "title": "Lancement du sérum Karité Glow",
+                      "objective": "notoriete",
+                      "theme": "beaute",
+                      "text": "Présenter le nouveau sérum au karité dans une routine du matin. Mentionner @savanecosmetics et le code GLOW10.",
+                      "link": "https://savane.ci/glow",
+                      "date": "2026-10-10T10:12:00.000Z",
+                      "file": null
+                    },
+                    "log": [
+                      {
+                        "s": "paid",
+                        "at": "2026-10-06T10:12:00.000Z",
+                        "n": "Paiement reçu · 90 000 FCFA bloqués en séquestre"
+                      }
+                    ],
+                    "perf": null,
+                    "proof": null,
+                    "msgs": [
+                      {
+                        "from": "brand",
+                        "t": "Bonjour Ama, le colis avec le sérum arrive chez vous demain avant 12 h.",
+                        "at": "2026-10-06T12:12:00.000Z"
+                      }
+                    ],
+                    "review": null,
+                    "disputeReason": null,
+                    "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2410-137&utm_content=amakouassi",
+                    "influencer": {
+                      "id": "i1",
+                      "handle": "amakouassi",
+                      "name": "Ama Kouassi",
+                      "hue": 47,
+                      "photo": null,
+                      "verified": true
+                    },
+                    "brand": {
+                      "id": "b1",
+                      "name": "Savane Cosmetics"
+                    }
+                  },
+                  {
+                    "id": "c2",
+                    "ref": "PU-2409-131",
+                    "brandId": "b1",
+                    "infId": "i3",
+                    "offer": {
+                      "id": "i3r0",
+                      "net": "tt",
+                      "fmt": "Test produit (vidéo)",
+                      "price": 90000
+                    },
+                    "amount": 90000,
+                    "fee": 13500,
+                    "payout": 76500,
+                    "status": "published",
+                    "createdAt": "2026-10-01T10:12:00.000Z",
+                    "pay": "om",
+                    "brief": {
+                      "title": "Test du nouveau coffret Savane Men",
+                      "objective": "engagement",
+                      "theme": "beaute",
+                      "text": "Test honnête du coffret homme, focus sur la barbe et la peau.",
+                      "link": "https://savane.ci/men",
+                      "date": "2026-10-05T10:12:00.000Z",
+                      "file": null
+                    },
+                    "log": [
+                      {
+                        "s": "paid",
+                        "at": "2026-10-01T10:12:00.000Z",
+                        "n": "Paiement reçu · fonds bloqués en séquestre"
+                      },
+                      {
+                        "s": "accepted",
+                        "at": "2026-10-02T10:12:00.000Z",
+                        "n": "Yao Tech a accepté la campagne"
+                      }
+                    ],
+                    "perf": {
+                      "views": 96400,
+                      "likes": 7310,
+                      "comments": 412,
+                      "shares": 388,
+                      "clicks": 1240
+                    },
+                    "proof": {
+                      "url": "https://www.tiktok.com/@yaotech/video/7421",
+                      "note": "Vidéo en ligne depuis 26 h, épinglée sur le profil.",
+                      "at": "2026-10-06T10:12:00.000Z"
+                    },
+                    "msgs": [
+                      {
+                        "from": "brand",
+                        "t": "Bonjour Yao, pensez à montrer le baume à barbe en gros plan, c'est notre produit phare.",
+                        "at": "2026-10-02T11:12:00.000Z"
+                      },
+                      {
+                        "from": "influencer",
+                        "t": "Bien noté ! Je tourne demain matin avec une lumière naturelle.",
+                        "at": "2026-10-02T15:12:00.000Z"
+                      }
+                    ],
+                    "review": null,
+                    "disputeReason": null,
+                    "utm": "https://savane.ci/men?utm_source=pullup&utm_medium=tiktok&utm_campaign=pu-2409-131&utm_content=yaotech",
+                    "influencer": {
+                      "id": "i3",
+                      "handle": "yaotech",
+                      "name": "Yao Tech",
+                      "hue": 141,
+                      "photo": null,
+                      "verified": true
+                    },
+                    "brand": {
+                      "id": "b1",
+                      "name": "Savane Cosmetics"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Campagnes"],
+        "summary": "Créer une campagne (annonceur)",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["infId", "rateId", "pay", "brief"],
+                "properties": {
+                  "infId": {
+                    "type": "string",
+                    "example": "i1"
+                  },
+                  "rateId": {
+                    "type": "string",
+                    "example": "i1r1"
+                  },
+                  "pay": {
+                    "type": "string",
+                    "enum": ["om", "mtn", "moov", "wave"]
+                  },
+                  "phone": {
+                    "type": "string",
+                    "example": "0700000000"
+                  },
+                  "otp": {
+                    "type": "string",
+                    "example": "3210",
+                    "description": "Obligatoire pour Orange Money."
+                  },
+                  "brief": {
+                    "type": "object"
+                  }
+                }
+              },
+              "examples": {
+                "orange": {
+                  "summary": "Orange Money (OTP)",
+                  "value": {
+                    "infId": "i1",
+                    "rateId": "i1r1",
+                    "pay": "om",
+                    "phone": "0700000000",
+                    "otp": "3210",
+                    "brief": {
+                      "title": "Lancement du sérum Karité Glow",
+                      "objective": "notoriete",
+                      "theme": "beaute",
+                      "text": "Présenter le sérum dans une routine du matin.",
+                      "link": "https://savane.ci/glow"
+                    }
+                  }
+                },
+                "mtn": {
+                  "summary": "MTN (sans OTP)",
+                  "value": {
+                    "infId": "i1",
+                    "rateId": "i1r1",
+                    "pay": "mtn",
+                    "phone": "0500000000",
+                    "brief": {
+                      "title": "Lancement du sérum Karité Glow",
+                      "objective": "notoriete",
+                      "theme": "beaute",
+                      "text": "Présenter le sérum dans une routine du matin.",
+                      "link": "https://savane.ci/glow"
+                    }
+                  }
+                },
+                "wave": {
+                  "summary": "Wave (redirection)",
+                  "value": {
+                    "infId": "i1",
+                    "rateId": "i1r1",
+                    "pay": "wave",
+                    "phone": "0100000000",
+                    "brief": {
+                      "title": "Lancement du sérum Karité Glow",
+                      "objective": "notoriete",
+                      "theme": "beaute",
+                      "text": "Présenter le sérum dans une routine du matin.",
+                      "link": "https://savane.ci/glow"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Campagne créée",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "payee": {
+                    "summary": "Payée (solde ou Mobile Money confirmé)",
+                    "value": {
+                      "id": "cmuyd56sy001d6ci0t6yc9331",
+                      "status": "paid",
+                      "message": "Paiement reçu. Les fonds sont sous séquestre."
+                    }
+                  },
+                  "attente": {
+                    "summary": "En attente (USSD ou redirectUrl Wave)",
+                    "value": {
+                      "id": "cmuyd50b6000l6ci0lhsuvljn",
+                      "status": "awaiting_payment",
+                      "message": "Confirmez le paiement sur votre téléphone.",
+                      "redirectUrl": "wave://pay/abc"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "403": {
+            "description": "Quota de la formule atteint",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Quota de campagnes atteint pour votre formule."
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/OtpRequired"
+          }
+        },
+        "description": "Encaissement Central APIS (`deposit`). `pay`: `om` | `mtn` | `moov` | `wave` (pas de carte). `phone` : 10 chiffres sans indicatif. Si `pay=om`, `otp` obligatoire (`#144*82#`). Wave peut renvoyer `redirectUrl`."
+      }
+    },
+    "/campaigns/{id}": {
+      "get": {
+        "tags": ["Campagnes"],
+        "summary": "Détail d'une campagne",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "c1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Détail (`access` = `ok`)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "access": "ok",
+                  "campaign": {
+                    "id": "c1",
+                    "ref": "PU-2410-137",
+                    "brandId": "b1",
+                    "infId": "i1",
+                    "offer": {
+                      "id": "i1r1",
+                      "net": "ig",
+                      "fmt": "Post + carrousel",
+                      "price": 90000
+                    },
+                    "amount": 90000,
+                    "fee": 13500,
+                    "payout": 76500,
+                    "status": "paid",
+                    "createdAt": "2026-10-06T10:12:00.000Z",
+                    "pay": "om",
+                    "brief": {
+                      "title": "Lancement du sérum Karité Glow",
+                      "objective": "notoriete",
+                      "theme": "beaute",
+                      "text": "Présenter le nouveau sérum au karité dans une routine du matin. Mentionner @savanecosmetics et le code GLOW10.",
+                      "link": "https://savane.ci/glow",
+                      "date": "2026-10-10T10:12:00.000Z",
+                      "file": null
+                    },
+                    "log": [
+                      {
+                        "s": "paid",
+                        "at": "2026-10-06T10:12:00.000Z",
+                        "n": "Paiement reçu · 90 000 FCFA bloqués en séquestre"
+                      }
+                    ],
+                    "perf": null,
+                    "proof": null,
+                    "msgs": [
+                      {
+                        "from": "brand",
+                        "t": "Bonjour Ama, le colis avec le sérum arrive chez vous demain avant 12 h.",
+                        "at": "2026-10-06T12:12:00.000Z"
+                      }
+                    ],
+                    "review": null,
+                    "disputeReason": null,
+                    "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2410-137&utm_content=amakouassi",
+                    "influencer": {
+                      "id": "i1",
+                      "handle": "amakouassi",
+                      "name": "Ama Kouassi",
+                      "hue": 47,
+                      "photo": null,
+                      "verified": true
+                    },
+                    "brand": {
+                      "id": "b1",
+                      "name": "Savane Cosmetics"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Campagne inconnue",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Campagne introuvable."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{id}/payment": {
+      "get": {
+        "tags": ["Campagnes"],
+        "summary": "Statut du paiement mobile",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statut du paiement",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "payee": {
+                    "summary": "Payée",
+                    "value": {
+                      "status": "paid"
+                    }
+                  },
+                  "attente": {
+                    "summary": "En attente",
+                    "value": {
+                      "status": "awaiting_payment"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Statuts PULLUP : `awaiting_payment` (INITIALISE/PENDING chez Central APIS) ou `paid` (DONE)."
+      }
+    },
+    "/campaigns/{id}/review": {
+      "post": {
+        "tags": ["Campagnes"],
+        "summary": "Laisser un avis (annonceur)",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "c3"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "stars": 5,
+                "text": "Sketch hilarant."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Avis publié",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Merci ! Votre avis est publié sur la vitrine."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Pas l’annonceur de la campagne, campagne non terminée ou avis déjà laissé",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Action non autorisée pour ce compte."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{id}/messages": {
+      "post": {
+        "tags": ["Campagnes"],
+        "summary": "Envoyer un message",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "c1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "text": "Le colis arrive demain."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message ajouté",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Message envoyé."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{id}/{action}": {
+      "post": {
+        "tags": ["Campagnes"],
+        "summary": "Transition d'état",
+        "description": "Actions : `accept`, `decline`, `proof` (influenceur) · `validate`, `dispute`, `cancel` (annonceur) · `release`, `refund` (admin, sur litige). Body selon l’action : `proof` → `{ url, note? }`, `dispute` → `{ reason }`.",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "c1"
+            }
+          },
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "accept",
+                "decline",
+                "proof",
+                "validate",
+                "dispute",
+                "cancel",
+                "release",
+                "refund"
+              ],
+              "example": "accept"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "reason": "Le live a duré 25 minutes au lieu des 30 prévues."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message selon l’action",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "accept": {
+                    "summary": "accept (influenceur)",
+                    "value": {
+                      "message": "Campagne acceptée. Publiez à la date prévue."
+                    }
+                  },
+                  "decline": {
+                    "summary": "decline (influenceur)",
+                    "value": {
+                      "message": "Campagne refusée. L'annonceur est remboursé."
+                    }
+                  },
+                  "proof": {
+                    "summary": "proof (influenceur) — body `{ url, note? }`",
+                    "value": {
+                      "message": "Preuve envoyée. Paiement à la validation."
+                    }
+                  },
+                  "validate": {
+                    "summary": "validate (annonceur)",
+                    "value": {
+                      "message": "Fonds libérés à l'influenceur."
+                    }
+                  },
+                  "dispute": {
+                    "summary": "dispute (annonceur) — body `{ reason }`",
+                    "value": {
+                      "message": "Litige transmis à l'équipe PULLUP."
+                    }
+                  },
+                  "cancel": {
+                    "summary": "cancel (annonceur, avant acceptation)",
+                    "value": {
+                      "message": "35 000 FCFA recrédités sur votre solde PULLUP."
+                    }
+                  },
+                  "release": {
+                    "summary": "release (admin, litige)",
+                    "value": {
+                      "message": "Fonds versés à l'influenceur."
+                    }
+                  },
+                  "refund": {
+                    "summary": "refund (admin, litige)",
+                    "value": {
+                      "message": "Annonceur remboursé."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "description": "Motif manquant pour un litige",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Décrivez le problème rencontré."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/r/{ref}": {
+      "get": {
+        "tags": ["Campagnes"],
+        "summary": "Redirection UTM (clic tracké)",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "PU-2410-137"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirection vers le lien du brief avec UTM",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2410-137&utm_content=amakouassi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/brand-space": {
+      "get": {
+        "tags": ["Espaces"],
+        "summary": "Espace annonceur",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Espace annonceur",
+            "content": {
+              "application/json": {
+                "example": {
+                  "brand": {
+                    "id": "b1",
+                    "name": "Savane Cosmetics",
+                    "contact": "Aïcha Diomandé",
+                    "email": "marketing@savane.ci",
+                    "plan": "pro",
+                    "sector": "Cosmétique",
+                    "balance": 0
+                  },
+                  "campaigns": [
+                    {
+                      "id": "cmuyd56sy001d6ci0t6yc9331",
+                      "ref": "PU-2610-141",
+                      "brandId": "b1",
+                      "infId": "i1",
+                      "offer": {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      },
+                      "amount": 90000,
+                      "fee": 13500,
+                      "payout": 76500,
+                      "status": "paid",
+                      "createdAt": "2026-10-07T17:10:07.282Z",
+                      "pay": "om",
+                      "brief": {
+                        "title": "Lancement du sérum Karité Glow",
+                        "objective": "notoriete",
+                        "theme": "beaute",
+                        "text": "Présenter le sérum dans une routine du matin.",
+                        "link": "https://savane.ci/glow",
+                        "date": null,
+                        "file": null
+                      },
+                      "log": [
+                        {
+                          "s": "paid",
+                          "at": "2026-10-07T17:10:07.317Z",
+                          "n": "Paiement Orange Money reçu · 90 000 FCFA bloqués en séquestre"
+                        }
+                      ],
+                      "perf": null,
+                      "proof": null,
+                      "msgs": [],
+                      "review": null,
+                      "disputeReason": null,
+                      "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2610-141&utm_content=amakouassi",
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "hue": 47,
+                        "photo": null,
+                        "verified": true
+                      },
+                      "brand": {
+                        "id": "b1",
+                        "name": "Savane Cosmetics"
+                      }
+                    },
+                    {
+                      "id": "c1",
+                      "ref": "PU-2410-137",
+                      "brandId": "b1",
+                      "infId": "i1",
+                      "offer": {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      },
+                      "amount": 90000,
+                      "fee": 13500,
+                      "payout": 76500,
+                      "status": "accepted",
+                      "createdAt": "2026-10-06T10:12:00.000Z",
+                      "pay": "om",
+                      "brief": {
+                        "title": "Lancement du sérum Karité Glow",
+                        "objective": "notoriete",
+                        "theme": "beaute",
+                        "text": "Présenter le nouveau sérum au karité dans une routine du matin. Mentionner @savanecosmetics et le code GLOW10.",
+                        "link": "https://savane.ci/glow",
+                        "date": "2026-10-10T10:12:00.000Z",
+                        "file": null
+                      },
+                      "log": [
+                        {
+                          "s": "paid",
+                          "at": "2026-10-06T10:12:00.000Z",
+                          "n": "Paiement reçu · 90 000 FCFA bloqués en séquestre"
+                        },
+                        {
+                          "s": "accepted",
+                          "at": "2026-10-07T17:10:07.348Z",
+                          "n": "Ama Kouassi a accepté la campagne"
+                        }
+                      ],
+                      "perf": null,
+                      "proof": null,
+                      "msgs": [
+                        {
+                          "from": "brand",
+                          "t": "Bonjour Ama, le colis avec le sérum arrive chez vous demain avant 12 h.",
+                          "at": "2026-10-06T12:12:00.000Z"
+                        },
+                        {
+                          "from": "brand",
+                          "t": "Le colis arrive demain.",
+                          "at": "2026-10-07T17:10:07.329Z"
+                        }
+                      ],
+                      "review": null,
+                      "disputeReason": null,
+                      "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2410-137&utm_content=amakouassi",
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "hue": 47,
+                        "photo": null,
+                        "verified": true
+                      },
+                      "brand": {
+                        "id": "b1",
+                        "name": "Savane Cosmetics"
+                      }
+                    }
+                  ],
+                  "favorites": [
+                    {
+                      "id": "i13",
+                      "handle": "reine.makeup",
+                      "name": "Reine Kacou",
+                      "city": "Abidjan · Yopougon",
+                      "cats": ["beaute", "amour"],
+                      "bio": "Maquilleuse professionnelle. Tutos make-up pour peaux noires, mariages et looks de soirée à petit prix.",
+                      "net": {
+                        "ig": [285000, 6.1],
+                        "tt": [410000, 8.3]
+                      },
+                      "aud": {
+                        "f": 86,
+                        "ages": [11, 50, 30, 9],
+                        "cities": [
+                          ["Abidjan", 66],
+                          ["Bouaké", 7]
+                        ]
+                      },
+                      "auth": 93,
+                      "creat": 4.7,
+                      "brief": 94,
+                      "onTime": 95,
+                      "rating": 4.7,
+                      "reviews": 41,
+                      "done": 33,
+                      "rates": [
+                        {
+                          "id": "i13r0",
+                          "net": "tt",
+                          "fmt": "Tuto sponsorisé",
+                          "price": 110000
+                        },
+                        {
+                          "id": "i13r1",
+                          "net": "ig",
+                          "fmt": "Story (24 h)",
+                          "price": 30000
+                        }
+                      ],
+                      "days": ["Mar", "Jeu"],
+                      "verified": true,
+                      "certified": false,
+                      "featured": false,
+                      "analytics": false,
+                      "status": "active",
+                      "accepts": {
+                        "pub": true,
+                        "partenariat": true,
+                        "dedicace": false
+                      },
+                      "views": [281, 455, 289, 462, 351, 457, 408],
+                      "qr": 936,
+                      "contacts": 121,
+                      "hue": 251,
+                      "photo": null,
+                      "favorite": true
+                    },
+                    {
+                      "id": "i5",
+                      "handle": "kaderfood",
+                      "name": "Kader Food",
+                      "city": "Abidjan · Treichville",
+                      "cats": ["food", "societe"],
+                      "bio": "Je teste les maquis, garbadromes et restos d'Abidjan. Note honnête, pas de chichi.",
+                      "net": {
+                        "fb": [160000, 3],
+                        "ig": [205000, 5.1],
+                        "tt": [540000, 8.6]
+                      },
+                      "aud": {
+                        "f": 49,
+                        "ages": [8, 45, 34, 13],
+                        "cities": [
+                          ["Abidjan", 77],
+                          ["Bouaké", 5]
+                        ]
+                      },
+                      "auth": 90,
+                      "creat": 4.7,
+                      "brief": 92,
+                      "onTime": 94,
+                      "rating": 4.5,
+                      "reviews": 57,
+                      "done": 41,
+                      "rates": [
+                        {
+                          "id": "i5r0",
+                          "net": "tt",
+                          "fmt": "Visite & avis (vidéo)",
+                          "price": 140000
+                        },
+                        {
+                          "id": "i5r1",
+                          "net": "ig",
+                          "fmt": "Story (24 h)",
+                          "price": 30000
+                        }
+                      ],
+                      "days": ["Jeu", "Sam"],
+                      "verified": true,
+                      "certified": false,
+                      "featured": false,
+                      "analytics": false,
+                      "status": "active",
+                      "accepts": {
+                        "pub": true,
+                        "partenariat": true,
+                        "dedicace": false
+                      },
+                      "views": [503, 424, 487, 484, 459, 534, 423],
+                      "qr": 1092,
+                      "contacts": 141,
+                      "hue": 235,
+                      "photo": null,
+                      "favorite": true
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/influencer-space": {
+      "get": {
+        "tags": ["Espaces"],
+        "summary": "Espace influenceur",
+        "x-updated": true,
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Espace influenceur (portefeuille, séquestre, demandes)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "influencer": {
+                    "id": "i1",
+                    "handle": "amakouassi",
+                    "name": "Ama Kouassi",
+                    "city": "Abidjan · Cocody",
+                    "cats": ["beaute", "societe"],
+                    "bio": "Je partage mes routines beauté, mes bons plans mode et la vie à Abidjan. Audience à 74 % féminine, très active en story.",
+                    "net": {
+                      "fb": [96000, 2.1],
+                      "ig": [412000, 5.8],
+                      "tt": [268000, 7.4]
+                    },
+                    "aud": {
+                      "f": 74,
+                      "ages": [9, 47, 33, 11],
+                      "cities": [
+                        ["Abidjan", 64],
+                        ["Bouaké", 8]
+                      ]
+                    },
+                    "auth": 94,
+                    "creat": 4.6,
+                    "brief": 96,
+                    "onTime": 98,
+                    "rating": 4.8,
+                    "reviews": 61,
+                    "done": 47,
+                    "rates": [
+                      {
+                        "id": "i1r0",
+                        "net": "ig",
+                        "fmt": "Story (24 h)",
+                        "price": 35000
+                      },
+                      {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      }
+                    ],
+                    "days": ["Lun", "Jeu"],
+                    "verified": true,
+                    "certified": true,
+                    "featured": false,
+                    "analytics": false,
+                    "status": "active",
+                    "accepts": {
+                      "pub": true,
+                      "partenariat": true,
+                      "dedicace": true
+                    },
+                    "views": [378, 319, 366, 364, 345, 401, 318],
+                    "qr": 821,
+                    "contacts": 107,
+                    "hue": 47,
+                    "photo": null,
+                    "favorite": false,
+                    "email": "amakouassi@mail.ci",
+                    "phone": "+225 07 00 00 00 00"
+                  },
+                  "campaigns": [
+                    {
+                      "id": "cmuyd56sy001d6ci0t6yc9331",
+                      "ref": "PU-2610-141",
+                      "brandId": "b1",
+                      "infId": "i1",
+                      "offer": {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      },
+                      "amount": 90000,
+                      "fee": 13500,
+                      "payout": 76500,
+                      "status": "paid",
+                      "createdAt": "2026-10-07T17:10:07.282Z",
+                      "pay": "om",
+                      "brief": {
+                        "title": "Lancement du sérum Karité Glow",
+                        "objective": "notoriete",
+                        "theme": "beaute",
+                        "text": "Présenter le sérum dans une routine du matin.",
+                        "link": "https://savane.ci/glow",
+                        "date": null,
+                        "file": null
+                      },
+                      "log": [
+                        {
+                          "s": "paid",
+                          "at": "2026-10-07T17:10:07.317Z",
+                          "n": "Paiement Orange Money reçu · 90 000 FCFA bloqués en séquestre"
+                        }
+                      ],
+                      "perf": null,
+                      "proof": null,
+                      "msgs": [],
+                      "review": null,
+                      "disputeReason": null,
+                      "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2610-141&utm_content=amakouassi",
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "hue": 47,
+                        "photo": null,
+                        "verified": true
+                      },
+                      "brand": {
+                        "id": "b1",
+                        "name": "Savane Cosmetics"
+                      }
+                    },
+                    {
+                      "id": "c1",
+                      "ref": "PU-2410-137",
+                      "brandId": "b1",
+                      "infId": "i1",
+                      "offer": {
+                        "id": "i1r1",
+                        "net": "ig",
+                        "fmt": "Post + carrousel",
+                        "price": 90000
+                      },
+                      "amount": 90000,
+                      "fee": 13500,
+                      "payout": 76500,
+                      "status": "accepted",
+                      "createdAt": "2026-10-06T10:12:00.000Z",
+                      "pay": "om",
+                      "brief": {
+                        "title": "Lancement du sérum Karité Glow",
+                        "objective": "notoriete",
+                        "theme": "beaute",
+                        "text": "Présenter le nouveau sérum au karité dans une routine du matin. Mentionner @savanecosmetics et le code GLOW10.",
+                        "link": "https://savane.ci/glow",
+                        "date": "2026-10-10T10:12:00.000Z",
+                        "file": null
+                      },
+                      "log": [
+                        {
+                          "s": "paid",
+                          "at": "2026-10-06T10:12:00.000Z",
+                          "n": "Paiement reçu · 90 000 FCFA bloqués en séquestre"
+                        },
+                        {
+                          "s": "accepted",
+                          "at": "2026-10-07T17:10:07.348Z",
+                          "n": "Ama Kouassi a accepté la campagne"
+                        }
+                      ],
+                      "perf": null,
+                      "proof": null,
+                      "msgs": [
+                        {
+                          "from": "brand",
+                          "t": "Bonjour Ama, le colis avec le sérum arrive chez vous demain avant 12 h.",
+                          "at": "2026-10-06T12:12:00.000Z"
+                        },
+                        {
+                          "from": "brand",
+                          "t": "Le colis arrive demain.",
+                          "at": "2026-10-07T17:10:07.329Z"
+                        }
+                      ],
+                      "review": null,
+                      "disputeReason": null,
+                      "utm": "https://savane.ci/glow?utm_source=pullup&utm_medium=instagram&utm_campaign=pu-2410-137&utm_content=amakouassi",
+                      "influencer": {
+                        "id": "i1",
+                        "handle": "amakouassi",
+                        "name": "Ama Kouassi",
+                        "hue": 47,
+                        "photo": null,
+                        "verified": true
+                      },
+                      "brand": {
+                        "id": "b1",
+                        "name": "Savane Cosmetics"
+                      }
+                    }
+                  ],
+                  "requests": [
+                    {
+                      "id": "cmuyd56r5001a6ci0xnxuawak",
+                      "infId": "i1",
+                      "from": "Boutique Nana Wax",
+                      "contact": "+225 07 48 22 19 03",
+                      "msg": "Partenariat 3 mois pour la nouvelle collection.",
+                      "type": "Partenariat",
+                      "at": "2026-10-07T17:10:07.217Z"
+                    },
+                    {
+                      "id": "r1",
+                      "infId": "i1",
+                      "from": "Boutique Nana Wax",
+                      "contact": "+225 07 48 22 19 03",
+                      "msg": "Bonjour Ama, nous aimerions un partenariat de 3 mois pour notre nouvelle collection.",
+                      "type": "Partenariat",
+                      "at": "2026-10-05T17:10:06.689Z"
+                    }
+                  ],
+                  "wallet": {
+                    "available": 142500,
+                    "tx": [
+                      {
+                        "t": "in",
+                        "a": 116000,
+                        "l": "Campagne PU-2409-131 libérée",
+                        "at": "2026-10-07T17:10:06.792Z"
+                      },
+                      {
+                        "t": "out",
+                        "a": 50000,
+                        "l": "Retrait Orange Money",
+                        "at": "2026-10-07T17:10:06.790Z"
+                      }
+                    ]
+                  },
+                  "escrow": 182750
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/brand": {
+      "put": {
+        "tags": ["Espaces"],
+        "summary": "Mettre à jour la fiche annonceur",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Savane Cosmetics",
+                "contact": "Aïcha Diomandé",
+                "sector": "Cosmétique"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fiche mise à jour",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Profil enregistré."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/campaigns.csv": {
+      "get": {
+        "tags": ["Espaces"],
+        "summary": "Export CSV des campagnes (annonceur Business)",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Export CSV (formule Business)",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Référence,Campagne,Influenceur,Réseau,Format,Montant FCFA,Statut,Vues,Interactions,Clics UTM,Créée le\nPU-2409-125,Ouvrir un compte Kalo en 2 minutes,Nadia Business,Facebook,Live Facebook,85000,Litige en cours,21400,1154,610,29/09/2026"
+              }
+            }
+          },
+          "403": {
+            "description": "Formule Free ou Pro",
+            "content": {
+              "application/json": {
+                "example": "Référence,Campagne,Influenceur,Réseau,Format,Montant FCFA,Statut,Vues,Interactions,Clics UTM,Créée le\nPU-2409-125,Ouvrir un compte Kalo en 2 minutes,Nadia Business,Facebook,Live Facebook,85000,Litige en cours,21400,1154,610,29/09/2026"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/plan": {
+      "put": {
+        "tags": ["Facturation"],
+        "summary": "Changer de formule",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "plan": "pro",
+                "pay": "om",
+                "phone": "0700000000",
+                "otp": "3210"
+              },
+              "schema": {
+                "type": "object",
+                "required": ["plan"],
+                "properties": {
+                  "plan": {
+                    "type": "string",
+                    "enum": ["free", "pro", "business"]
+                  },
+                  "pay": {
+                    "type": "string",
+                    "enum": ["om", "mtn", "moov", "wave"]
+                  },
+                  "phone": {
+                    "type": "string",
+                    "example": "0700000000"
+                  },
+                  "otp": {
+                    "type": "string",
+                    "example": "3210",
+                    "description": "Obligatoire si pay=om."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "active": {
+                    "summary": "Formule activée",
+                    "value": {
+                      "message": "Formule Business activée.",
+                      "status": "active"
+                    }
+                  },
+                  "attente": {
+                    "summary": "Paiement à confirmer (USSD ou Wave)",
+                    "value": {
+                      "message": "Confirmez le paiement sur votre téléphone.",
+                      "status": "awaiting_payment",
+                      "redirectUrl": "wave://pay/abc"
+                    }
+                  },
+                  "resiliee": {
+                    "summary": "Retour à Free (reste active jusqu’à échéance)",
+                    "value": {
+                      "message": "Votre formule Business reste active jusqu'au 06/11/2026.",
+                      "status": "cancelled"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/OtpRequired"
+          }
+        },
+        "description": "Pro / Business : encaissement Central APIS. Orange → `otp`. Wave → `redirectUrl` possible. Free : résiliation à l’échéance."
+      }
+    },
+    "/billing/boosts": {
+      "post": {
+        "tags": ["Facturation"],
+        "summary": "Acheter une option (influenceur)",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "key": "certified",
+                "pay": "om",
+                "phone": "0700000000",
+                "otp": "3210"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Résultat",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "active": {
+                    "summary": "Option activée",
+                    "value": {
+                      "message": "Option Analytics avancées activée pour 30 jours.",
+                      "status": "active"
+                    }
+                  },
+                  "attente": {
+                    "summary": "Paiement à confirmer",
+                    "value": {
+                      "message": "Confirmez le paiement sur votre téléphone.",
+                      "status": "awaiting_payment",
+                      "redirectUrl": "wave://pay/abc"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/OtpRequired"
+          }
+        },
+        "description": "Options influenceur. Orange → `otp`. Wave → `redirectUrl` possible."
+      }
+    },
+    "/wallet/withdrawals": {
+      "post": {
+        "tags": ["Facturation"],
+        "summary": "Demander un retrait",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "amount": 50000,
+                "operator": "om",
+                "phone": "0700000000"
+              },
+              "schema": {
+                "type": "object",
+                "required": ["amount", "operator", "phone"],
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "example": 50000
+                  },
+                  "operator": {
+                    "type": "string",
+                    "enum": ["om", "mtn", "moov", "wave"]
+                  },
+                  "phone": {
+                    "type": "string",
+                    "example": "0700000000"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "OTP de confirmation si demandé."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Retrait envoyé",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "50 000 FCFA envoyés sur Orange Money."
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/AmountRejected"
+          }
+        },
+        "description": "Retrait Central APIS (`withdraw` / CASHIN). `operator`: `om` | `mtn` | `moov` | `wave`. Montant ≥ 200 FCFA et multiple de 50. Un `code` SMS peut être exigé selon le plafond."
+      }
+    },
+    "/payments/callback": {
+      "get": {
+        "tags": ["Paiements"],
+        "summary": "Callback Central APIS — ping",
+        "x-updated": true,
+        "description": "URL à coller dans **Url callback** du tableau de bord Central APIS : `http://13.140.137.171:8090/api/payments/callback`. Un GET sans identifiant répond `{ ok: true }`.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Route prête",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          }
+        },
+        "operationId": "centralApisCallbackPing"
+      },
+      "post": {
+        "tags": ["Paiements"],
+        "summary": "Callback Central APIS — résultat",
+        "x-updated": true,
+        "description": "Central APIS POSTe le même modèle `etat` + `result` qu’après un `deposit` ou un `withdraw`.\n\n- `typeTransaction`: `DEPOSIT` (le client paie PULLUP) ou `WITHDRAW` (PULLUP crédite l’influenceur)\n- `state`: `INITIALISE` | `PENDING` | `DONE` | `FAILURE`\n- `partner_reference`: id PULLUP du paiement ou du retrait\n\nSeul `DONE` libère le séquestre / confirme le retrait. L’API statut est rappelée pour confirmer.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CentralApisCallback"
+              },
+              "examples": {
+                "initialise": {
+                  "summary": "Encaissement lancé (INITIALISE)",
+                  "value": {
+                    "etat": true,
+                    "result": {
+                      "recipient_phone_number": "0700000000",
+                      "partner_reference": "clxxxpaiement",
+                      "amount_send_net": "90000",
+                      "amount_receive_in_balance": "90000",
+                      "service": "orange",
+                      "typeTransaction": "DEPOSIT",
+                      "state": "INITIALISE",
+                      "transaction_reference": "OP-123"
+                    }
+                  }
+                },
+                "done": {
+                  "summary": "Encaissement validé (DONE)",
+                  "value": {
+                    "etat": true,
+                    "result": {
+                      "recipient_phone_number": "0700000000",
+                      "partner_reference": "clxxxpaiement",
+                      "amount_send_net": "90000",
+                      "amount_receive_in_balance": "90000",
+                      "service": "orange",
+                      "typeTransaction": "DEPOSIT",
+                      "state": "DONE",
+                      "transaction_reference": "OP-123"
+                    }
+                  }
+                },
+                "wave": {
+                  "summary": "Wave avec payment_url",
+                  "value": {
+                    "etat": true,
+                    "result": {
+                      "recipient_phone_number": "0100000000",
+                      "partner_reference": "clxxxwave",
+                      "service": "wave",
+                      "typeTransaction": "DEPOSIT",
+                      "state": "PENDING",
+                      "payment_url": "wave://pay/abc"
+                    }
+                  }
+                },
+                "withdraw": {
+                  "summary": "Retrait échoué (FAILURE)",
+                  "value": {
+                    "etat": true,
+                    "result": {
+                      "recipient_phone_number": "0500000000",
+                      "partner_reference": "clxxxretrait",
+                      "service": "mtn",
+                      "typeTransaction": "WITHDRAW",
+                      "state": "FAILURE",
+                      "transaction_reference": "OP-456"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accusé de réception (idempotent)",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "traite": {
+                    "summary": "Événement accepté",
+                    "value": {
+                      "ok": true
+                    }
+                  },
+                  "doublon": {
+                    "summary": "Événement déjà reçu",
+                    "value": {
+                      "ok": true,
+                      "duplicate": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton ou signature invalide",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Signature invalide."
+                }
+              }
+            }
+          }
+        },
+        "operationId": "centralApisCallback"
+      }
+    },
+    "/payments/webhook/{provider}": {
+      "post": {
+        "tags": ["Paiements"],
+        "summary": "Webhook PSP (mode fake / CinetPay)",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["fake", "cinetpay", "central-apis"],
+              "example": "fake"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accusé de réception (idempotent)",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "traite": {
+                    "summary": "Événement accepté",
+                    "value": {
+                      "ok": true
+                    }
+                  },
+                  "doublon": {
+                    "summary": "Événement déjà reçu",
+                    "value": {
+                      "ok": true,
+                      "duplicate": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Signature HMAC invalide",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Signature invalide."
+                }
+              }
+            }
+          }
+        },
+        "description": "Route historique signée HMAC. **Central APIS n’utilise pas cette URL** : déclarer `/api/payments/callback`.\n\nEn local avec `PAYMENT_PROVIDER=fake`, poster ici avec `x-webhook-signature`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "event_id": "evt-1",
+                "providerRef": "fake_x"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

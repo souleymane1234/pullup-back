@@ -1,0 +1,796 @@
+import type { PrismaClient } from '@prisma/client';
+import { derivedOf } from '../src/modules/influencers/domain/metrics.js';
+import type { InfluencerRecord } from '../src/modules/influencers/domain/present.js';
+import {
+  last30Days,
+  seedViews,
+} from '../src/modules/influencers/domain/views.js';
+
+type RateTuple = [string, string, number];
+
+/* id, handle, nom, ville, catégories, bio, réseaux, audience, scores, tarifs, jours, visites de base */
+const ROWS: Array<
+  [
+    string,
+    string,
+    string,
+    string,
+    string[],
+    string,
+    Record<string, [number, number]>,
+    { f: number; ages: number[]; cities: Array<[string, number]> },
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    RateTuple[],
+    string[],
+    number,
+  ]
+> = [
+  [
+    'i1',
+    'amakouassi',
+    'Ama Kouassi',
+    'Abidjan · Cocody',
+    ['beaute', 'societe'],
+    'Je partage mes routines beauté, mes bons plans mode et la vie à Abidjan. Audience à 74 % féminine, très active en story.',
+    { ig: [412000, 5.8], tt: [268000, 7.4], fb: [96000, 2.1] },
+    {
+      f: 74,
+      ages: [9, 47, 33, 11],
+      cities: [
+        ['Abidjan', 64],
+        ['Bouaké', 8],
+        ['Yamoussoukro', 6],
+        ['Autres', 22],
+      ],
+    },
+    94,
+    4.6,
+    96,
+    98,
+    4.8,
+    61,
+    47,
+    [
+      ['ig', 'Story (24 h)', 35000],
+      ['ig', 'Post + carrousel', 90000],
+      ['tt', 'Vidéo TikTok', 120000],
+      ['ig', 'Dédicace vidéo', 25000],
+    ],
+    ['Lun', 'Jeu', 'Sam'],
+    342,
+  ],
+  [
+    'i2',
+    'legbakacomedy',
+    'Le Gbaka Comedy',
+    'Abidjan · Yopougon',
+    ['humour', 'societe'],
+    'Sketchs du quotidien ivoirien, en nouchi et en français. Mes vidéos tournent dans les gbakas, les bureaux et les grins.',
+    { tt: [1350000, 9.1], fb: [820000, 4.2], ig: [310000, 6.0] },
+    {
+      f: 46,
+      ages: [14, 52, 25, 9],
+      cities: [
+        ['Abidjan', 58],
+        ['Bouaké', 11],
+        ['Daloa', 7],
+        ['Autres', 24],
+      ],
+    },
+    91,
+    4.9,
+    88,
+    90,
+    4.6,
+    128,
+    103,
+    [
+      ['tt', 'Sketch sponsorisé', 250000],
+      ['fb', 'Vidéo Facebook', 180000],
+      ['ig', 'Story (24 h)', 50000],
+    ],
+    ['Mar', 'Ven', 'Dim'],
+    1210,
+  ],
+  [
+    'i3',
+    'yaotech',
+    'Yao Tech',
+    'Abidjan · Plateau',
+    ['tech', 'business'],
+    'Tests de smartphones, applis et services numériques made in Africa. Je vulgarise la tech pour tout le monde.',
+    { tt: [186000, 6.9], ig: [74000, 4.4], fb: [52000, 2.6] },
+    {
+      f: 28,
+      ages: [11, 44, 35, 10],
+      cities: [
+        ['Abidjan', 71],
+        ['San-Pédro', 6],
+        ['Bouaké', 5],
+        ['Autres', 18],
+      ],
+    },
+    97,
+    4.4,
+    99,
+    100,
+    4.9,
+    34,
+    29,
+    [
+      ['tt', 'Test produit (vidéo)', 90000],
+      ['ig', 'Post + story', 60000],
+      ['fb', 'Live 30 min', 110000],
+    ],
+    ['Mer', 'Sam'],
+    268,
+  ],
+  [
+    'i4',
+    'fatoubamba.fit',
+    'Fatou Bamba',
+    'Abidjan · Marcory',
+    ['sport', 'beaute'],
+    'Coach sportive certifiée. Programmes maison, nutrition locale et motivation au quotidien.',
+    { ig: [158000, 6.2], tt: [121000, 8.0] },
+    {
+      f: 68,
+      ages: [6, 41, 39, 14],
+      cities: [
+        ['Abidjan', 60],
+        ['Grand-Bassam', 9],
+        ['Bouaké', 7],
+        ['Autres', 24],
+      ],
+    },
+    95,
+    4.3,
+    97,
+    97,
+    4.7,
+    22,
+    18,
+    [
+      ['ig', 'Story (24 h)', 20000],
+      ['ig', 'Reel sponsorisé', 70000],
+      ['tt', 'Défi TikTok', 85000],
+    ],
+    ['Lun', 'Mer', 'Ven'],
+    190,
+  ],
+  [
+    'i5',
+    'kaderfood',
+    'Kader Food',
+    'Abidjan · Treichville',
+    ['food', 'societe'],
+    "Je teste les maquis, garbadromes et restos d'Abidjan. Note honnête, pas de chichi.",
+    { tt: [540000, 8.6], ig: [205000, 5.1], fb: [160000, 3.0] },
+    {
+      f: 49,
+      ages: [8, 45, 34, 13],
+      cities: [
+        ['Abidjan', 77],
+        ['Bouaké', 5],
+        ['Assinie', 4],
+        ['Autres', 14],
+      ],
+    },
+    90,
+    4.7,
+    92,
+    94,
+    4.5,
+    57,
+    41,
+    [
+      ['tt', 'Visite & avis (vidéo)', 140000],
+      ['ig', 'Story (24 h)', 30000],
+      ['fb', 'Post Facebook', 45000],
+    ],
+    ['Jeu', 'Sam', 'Dim'],
+    455,
+  ],
+  [
+    'i6',
+    'mariamstyle',
+    'Mariam Sangaré',
+    'Abidjan · Riviera',
+    ['beaute', 'business'],
+    'Styliste et créatrice. Je mets en avant le pagne et les marques africaines dans des looks modernes.',
+    { ig: [96000, 4.9], tt: [48000, 6.3], sc: [30000, 9.2] },
+    {
+      f: 81,
+      ages: [7, 43, 38, 12],
+      cities: [
+        ['Abidjan', 69],
+        ['Dakar', 6],
+        ['Paris', 5],
+        ['Autres', 20],
+      ],
+    },
+    93,
+    4.8,
+    95,
+    92,
+    4.6,
+    19,
+    15,
+    [
+      ['ig', 'Post lookbook', 65000],
+      ['ig', 'Story (24 h)', 18000],
+      ['sc', 'Snap privé', 12000],
+    ],
+    ['Mar', 'Ven'],
+    142,
+  ],
+  [
+    'i7',
+    'juniorballon',
+    'Junior Ballon',
+    'Abidjan · Abobo',
+    ['sport', 'jeux'],
+    'Football ivoirien, Ligue 1, CAN et pronostics. La communauté des vrais supporters.',
+    { fb: [690000, 3.6], tt: [310000, 7.1] },
+    {
+      f: 17,
+      ages: [12, 49, 28, 11],
+      cities: [
+        ['Abidjan', 52],
+        ['Bouaké', 12],
+        ['Korhogo', 8],
+        ['Autres', 28],
+      ],
+    },
+    84,
+    4.1,
+    85,
+    88,
+    4.2,
+    44,
+    36,
+    [
+      ['fb', 'Post Facebook', 90000],
+      ['tt', 'Vidéo TikTok', 110000],
+      ['fb', 'Live match', 160000],
+    ],
+    ['Mer', 'Sam', 'Dim'],
+    601,
+  ],
+  [
+    'i8',
+    'awainfos225',
+    'Awa Infos',
+    'Abidjan · Plateau',
+    ['actu', 'societe'],
+    "L'actualité ivoirienne vérifiée, résumée en 60 secondes. Économie, société, culture.",
+    { fb: [480000, 2.4], ig: [134000, 3.3], tt: [92000, 5.0] },
+    {
+      f: 52,
+      ages: [4, 33, 40, 23],
+      cities: [
+        ['Abidjan', 55],
+        ['Bouaké', 9],
+        ['San-Pédro', 7],
+        ['Autres', 29],
+      ],
+    },
+    96,
+    4.0,
+    98,
+    99,
+    4.8,
+    38,
+    31,
+    [
+      ['fb', 'Publication sponsorisée', 75000],
+      ['ig', 'Story (24 h)', 25000],
+      ['tt', 'Résumé vidéo', 60000],
+    ],
+    ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'],
+    233,
+  ],
+  [
+    'i9',
+    'djkassi',
+    'DJ Kassi',
+    'Abidjan · Koumassi',
+    ['musique', 'humour'],
+    'DJ et danseur. Je lance les challenges coupé-décalé qui font bouger tout le pays.',
+    { tt: [890000, 10.2], ig: [240000, 6.4], sc: [110000, 8.8] },
+    {
+      f: 55,
+      ages: [19, 54, 20, 7],
+      cities: [
+        ['Abidjan', 61],
+        ['Bouaké', 8],
+        ['Accra', 5],
+        ['Autres', 26],
+      ],
+    },
+    88,
+    4.8,
+    86,
+    87,
+    4.4,
+    49,
+    40,
+    [
+      ['tt', 'Challenge de danse', 200000],
+      ['ig', 'Reel sponsorisé', 80000],
+      ['sc', 'Story Snapchat', 30000],
+    ],
+    ['Ven', 'Sam'],
+    780,
+  ],
+  [
+    'i10',
+    'nadia.business',
+    'Nadia Business',
+    'Abidjan · Angré',
+    ['business', 'tech'],
+    'Entrepreneuse e-commerce. Conseils pour vendre en ligne, outils de paiement et histoires de réussite.',
+    { ig: [118000, 4.1], fb: [150000, 2.8], tt: [64000, 5.5] },
+    {
+      f: 63,
+      ages: [3, 30, 45, 22],
+      cities: [
+        ['Abidjan', 66],
+        ['Bouaké', 7],
+        ['Yamoussoukro', 5],
+        ['Autres', 22],
+      ],
+    },
+    97,
+    4.2,
+    99,
+    98,
+    4.9,
+    27,
+    24,
+    [
+      ['ig', 'Post éducatif', 55000],
+      ['fb', 'Live Facebook', 85000],
+      ['tt', 'Vidéo TikTok', 50000],
+    ],
+    ['Mar', 'Jeu'],
+    176,
+  ],
+  [
+    'i11',
+    'bouakevibes',
+    'Bouaké Vibes',
+    'Bouaké',
+    ['societe', 'food'],
+    'La vie à Bouaké et dans le centre du pays : événements, bons plans, rencontres.',
+    { fb: [87000, 4.8], tt: [63000, 7.7] },
+    {
+      f: 51,
+      ages: [10, 46, 31, 13],
+      cities: [
+        ['Bouaké', 58],
+        ['Yamoussoukro', 12],
+        ['Abidjan', 14],
+        ['Autres', 16],
+      ],
+    },
+    92,
+    4.1,
+    93,
+    96,
+    4.5,
+    12,
+    9,
+    [
+      ['fb', 'Post Facebook', 25000],
+      ['tt', 'Vidéo TikTok', 40000],
+    ],
+    ['Mer', 'Sam'],
+    88,
+  ],
+  [
+    'i13',
+    'reine.makeup',
+    'Reine Kacou',
+    'Abidjan · Yopougon',
+    ['beaute', 'amour'],
+    'Maquilleuse professionnelle. Tutos make-up pour peaux noires, mariages et looks de soirée à petit prix.',
+    { tt: [410000, 8.3], ig: [285000, 6.1] },
+    {
+      f: 86,
+      ages: [11, 50, 30, 9],
+      cities: [
+        ['Abidjan', 66],
+        ['Bouaké', 7],
+        ['Lomé', 5],
+        ['Autres', 22],
+      ],
+    },
+    93,
+    4.7,
+    94,
+    95,
+    4.7,
+    41,
+    33,
+    [
+      ['tt', 'Tuto sponsorisé', 110000],
+      ['ig', 'Story (24 h)', 30000],
+      ['ig', 'Reel avant/après', 75000],
+    ],
+    ['Mar', 'Jeu', 'Sam'],
+    390,
+  ],
+  [
+    'i14',
+    'ismael.voyage',
+    'Ismaël Voyage',
+    'Abidjan · Cocody',
+    ['societe', 'food'],
+    "Je fais découvrir la Côte d'Ivoire : Assinie, Man, Sassandra, hôtels et escapades du week-end.",
+    { ig: [176000, 5.4], tt: [220000, 7.2], fb: [98000, 3.1] },
+    {
+      f: 58,
+      ages: [4, 38, 41, 17],
+      cities: [
+        ['Abidjan', 63],
+        ['Yamoussoukro', 7],
+        ['Paris', 6],
+        ['Autres', 24],
+      ],
+    },
+    95,
+    4.6,
+    96,
+    97,
+    4.8,
+    24,
+    20,
+    [
+      ['ig', 'Reel destination', 85000],
+      ['tt', 'Vlog TikTok', 95000],
+      ['ig', 'Story (24 h)', 25000],
+    ],
+    ['Ven', 'Dim'],
+    205,
+  ],
+  [
+    'i15',
+    'grace.conseils',
+    'Grâce Conseils',
+    'Abidjan · Marcory',
+    ['amour', 'societe'],
+    'Conseils de couple, vie de famille et confiance en soi. Une communauté bienveillante qui se confie.',
+    { fb: [520000, 4.5], tt: [380000, 8.0], ig: [150000, 5.2] },
+    {
+      f: 71,
+      ages: [3, 36, 42, 19],
+      cities: [
+        ['Abidjan', 57],
+        ['Bouaké', 9],
+        ['Daloa', 6],
+        ['Autres', 28],
+      ],
+    },
+    90,
+    4.4,
+    91,
+    93,
+    4.5,
+    36,
+    28,
+    [
+      ['fb', 'Post Facebook', 70000],
+      ['tt', 'Vidéo conseil', 95000],
+      ['fb', 'Live questions-réponses', 130000],
+    ],
+    ['Lun', 'Mer', 'Ven'],
+    410,
+  ],
+  [
+    'i16',
+    'tontonblagueur',
+    'Tonton Blagueur',
+    'Abidjan · Adjamé',
+    ['humour', 'musique'],
+    'Blagues, parodies et chansons détournées. Le rire du quartier, partagé dans tout le pays.',
+    { fb: [360000, 3.9], tt: [640000, 8.7] },
+    {
+      f: 44,
+      ages: [13, 48, 28, 11],
+      cities: [
+        ['Abidjan', 54],
+        ['Bouaké', 12],
+        ['Korhogo', 7],
+        ['Autres', 27],
+      ],
+    },
+    87,
+    4.6,
+    87,
+    89,
+    4.3,
+    52,
+    44,
+    [
+      ['tt', 'Sketch sponsorisé', 160000],
+      ['fb', 'Vidéo Facebook', 110000],
+    ],
+    ['Mar', 'Sam'],
+    690,
+  ],
+  [
+    'i12',
+    'koffigaming',
+    'Koffi Gaming',
+    'Abidjan · Bingerville',
+    ['jeux', 'tech'],
+    'Streams FIFA, eFootball et jeux mobiles. Tournois communautaires chaque week-end.',
+    { tt: [142000, 7.9], fb: [66000, 3.9], ig: [38000, 4.6] },
+    {
+      f: 15,
+      ages: [24, 52, 19, 5],
+      cities: [
+        ['Abidjan', 63],
+        ['Bouaké', 8],
+        ['Daloa', 5],
+        ['Autres', 24],
+      ],
+    },
+    89,
+    4.5,
+    90,
+    91,
+    4.3,
+    15,
+    12,
+    [
+      ['tt', 'Vidéo gameplay', 60000],
+      ['fb', 'Live tournoi', 90000],
+      ['ig', 'Story (24 h)', 15000],
+    ],
+    ['Ven', 'Sam', 'Dim'],
+    121,
+  ],
+];
+
+export function emailOf(_id: string, handle: string) {
+  return `${handle}@mail.ci`;
+}
+
+export function seedInfluencerRecords(): InfluencerRecord[] {
+  const certified = new Set(['i1', 'i3', 'i8', 'i10']);
+  return ROWS.map((row) => {
+    const [
+      id,
+      handle,
+      name,
+      city,
+      cats,
+      bio,
+      net,
+      aud,
+      auth,
+      creat,
+      brief,
+      onTime,
+      rating,
+      reviews,
+      done,
+      ratesRaw,
+      days,
+      base,
+    ] = row;
+    const rates = ratesRaw.map(([netKey, fmt, price], index) => ({
+      id: `${id}r${index}`,
+      net: netKey,
+      fmt,
+      price,
+    }));
+    return {
+      id,
+      handle,
+      name,
+      city,
+      cats,
+      bio,
+      net,
+      aud,
+      auth,
+      creat,
+      brief,
+      onTime,
+      rating,
+      reviews,
+      done,
+      rates,
+      days,
+      verified: true,
+      certified: certified.has(id),
+      status: 'active',
+      accepts: {
+        pub: true,
+        partenariat: true,
+        dedicace: rates.some((rate) => /Dédicace/.test(rate.fmt)),
+      },
+      views: seedViews(base, id),
+      qr: Math.round(base * 2.4),
+      contacts: Math.round(base * 0.31),
+      hue: (Number.parseInt(id.slice(1), 10) * 47) % 360,
+      photo: null,
+    };
+  });
+}
+
+export async function seedInfluencers(
+  prisma: PrismaClient,
+  passwordHash: string,
+) {
+  const certified = new Set(['i1', 'i3', 'i8', 'i10']);
+  for (const row of ROWS) {
+    const [
+      id,
+      handle,
+      name,
+      city,
+      cats,
+      bio,
+      net,
+      aud,
+      auth,
+      creat,
+      brief,
+      onTime,
+      rating,
+      reviews,
+      done,
+      ratesRaw,
+      days,
+      base,
+    ] = row;
+    const rates = ratesRaw.map(([netKey, fmt, price], index) => ({
+      id: `${id}r${index}`,
+      net: netKey,
+      fmt,
+      price,
+    }));
+    const derived = derivedOf({
+      net,
+      rates,
+      auth,
+      creat,
+      brief,
+      onTime,
+      verified: true,
+      status: 'active',
+    });
+    const email = emailOf(id, handle);
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: { passwordHash, deletedAt: null, role: 'influencer' },
+      create: { email, passwordHash, role: 'influencer' },
+    });
+    const data = {
+      handle,
+      name,
+      phone: id === 'i1' ? '+225 07 00 00 00 00' : '',
+      city,
+      bio,
+      hue: (Number.parseInt(id.slice(1), 10) * 47) % 360,
+      verified: true,
+      certified: certified.has(id),
+      status: 'active' as const,
+      acceptsPub: true,
+      acceptsPartenariat: true,
+      acceptsDedicace: rates.some((rate) => /Dédicace/.test(rate.fmt)),
+      scoreAuth: auth,
+      scoreCreat: creat,
+      scoreBrief: brief,
+      scoreOnTime: onTime,
+      scoreRating: rating,
+      scoreReviews: reviews,
+      scoreDone: done,
+      nets: net,
+      cats,
+      audience: aud,
+      days,
+      rates,
+      qrScans: Math.round(base * 2.4),
+      contactsCount: Math.round(base * 0.31),
+      totalFollowers: derived.totalFollowers,
+      avgEngagement: derived.avgEngagement,
+      minPrice: derived.minPrice,
+      badgeKey: derived.badgeKey,
+      pullupScore: derived.pullupScore,
+    };
+    const existing = await prisma.influencer.findUnique({
+      where: { userId: user.id },
+    });
+    if (existing) {
+      await prisma.influencer.update({ where: { userId: user.id }, data });
+    } else {
+      await prisma.influencer.create({
+        data: { id, userId: user.id, ...data },
+      });
+    }
+    const saved = await prisma.influencer.findUniqueOrThrow({
+      where: { userId: user.id },
+    });
+    await prisma.wallet.upsert({
+      where: { influencerId: saved.id },
+      update: {},
+      create: { influencerId: saved.id, availableFcfa: 0 },
+    });
+
+    const views = seedViews(base, id);
+    const days30 = last30Days();
+    await prisma.profileViewDaily.deleteMany({
+      where: { influencerId: saved.id },
+    });
+    await prisma.profileViewDaily.createMany({
+      data: days30.map((day, index) => ({
+        influencerId: saved.id,
+        day,
+        views: views[index] ?? 0,
+      })),
+    });
+  }
+
+  await prisma.favorite.deleteMany({ where: { brandId: 'b1' } });
+  await prisma.favorite.createMany({
+    data: ['i3', 'i5', 'i13'].map((influencerId) => ({
+      brandId: 'b1',
+      influencerId,
+    })),
+    skipDuplicates: true,
+  });
+
+  const reviewCount = await prisma.review.count({
+    where: { influencerId: 'i1', campaignId: null },
+  });
+  if (reviewCount === 0) {
+    const ago = (days: number) => new Date(Date.now() - days * 86_400_000);
+    await prisma.review.createMany({
+      data: [
+        {
+          influencerId: 'i1',
+          brandName: 'Boutique Nana Wax',
+          stars: 5,
+          text: 'Story très soignée, nos ventes en ligne ont doublé le week-end suivant.',
+          createdAt: ago(40),
+        },
+        {
+          influencerId: 'i1',
+          brandName: 'Glow Hair Abidjan',
+          stars: 4,
+          text: 'Contenu de qualité, publié avec un jour de retard mais bien prévenu.',
+          createdAt: ago(70),
+        },
+      ],
+    });
+  }
+
+  const requestCount = await prisma.contactRequest.count({
+    where: { id: 'r1' },
+  });
+  if (requestCount === 0) {
+    await prisma.contactRequest.create({
+      data: {
+        id: 'r1',
+        influencerId: 'i1',
+        fromName: 'Boutique Nana Wax',
+        contact: '+225 07 48 22 19 03',
+        message:
+          'Bonjour Ama, nous aimerions un partenariat de 3 mois pour notre nouvelle collection.',
+        type: 'Partenariat',
+        createdAt: new Date(Date.now() - 2 * 86_400_000),
+      },
+    });
+  }
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PULLUP API — Swagger</title>
+    <link rel="stylesheet" href="/api/docs/assets/swagger-ui.css" />
+    <style>
+      body { margin: 0; background: #f7f4ef; }
+      .topbar { display: none; }
+      .pullup-banner {
+        font-family: system-ui, sans-serif;
+        background: #1a1a1a;
+        color: #fff;
+        padding: 14px 24px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .pullup-banner strong { letter-spacing: 0.04em; }
+      .pullup-banner .admin {
+        background: #c0392b;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 999px;
+        text-transform: uppercase;
+      }
+      .pullup-banner span { opacity: 0.9; font-size: 14px; }
+      .swagger-ui .opblock-tag-section:first-of-type {
+        background: #fff5f4;
+        border: 1px solid #f5c6c2;
+        border-radius: 8px;
+        padding: 8px 8px 16px;
+        margin: 16px 0 28px;
+      }
+      .swagger-ui #operations-tag-Admin {
+        color: #9b1c1c;
+        font-weight: 700;
+      }
+      .swagger-ui #operations-tag-Admin small { color: #7a2e2e; }
+      .pullup-banner .updated {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 13px;
+        opacity: 1;
+      }
+      .pullup-banner .updated i,
+      .swagger-ui .opblock-updated .opblock-summary-path::before {
+        content: '';
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.28);
+        flex-shrink: 0;
+      }
+      .swagger-ui .opblock-updated .opblock-summary-path::before {
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+      .swagger-ui .opblock-updated {
+        box-shadow: inset 3px 0 0 #22c55e;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="pullup-banner">
+      <strong>PULLUP API</strong>
+      <span class="admin">Admin</span>
+      <span class="updated"><i></i> Route mise à jour</span>
+      <span>Admin : <code>admin@pullup.net</code> (mot de passe = <code>DEMO_PASSWORD</code>). Callback Central APIS : <code>http://13.140.137.171:8090/api/payments/callback</code>. Orange : envoyer <code>otp</code> (<code>#144*82#</code>).</span>
+    </header>
+    <div id="swagger-ui"></div>
+    <script src="/api/docs/assets/swagger-ui-bundle.js"></script>
+    <script src="/api/docs/swagger-init.js"></script>
+  </body>
+</html>
