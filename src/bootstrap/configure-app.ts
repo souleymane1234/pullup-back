@@ -118,7 +118,8 @@ export async function configureApp(app: INestApplication): Promise<void> {
       store,
       cookie: {
         httpOnly: true,
-        secure: production,
+        // HTTPS seulement quand la requête l'est vraiment. Sur http://IP:6100, Secure empêche le navigateur de garder la session.
+        secure: production ? 'auto' : false,
         sameSite: 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
