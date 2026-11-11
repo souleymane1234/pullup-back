@@ -18,6 +18,10 @@ export async function configureApp(app: INestApplication): Promise<void> {
   const env = app.get(EnvService);
   const redis = app.get(RedisService);
   const production = env.production;
+  // Nginx termine le HTTPS. Sans ça, le cookie Secure n'est jamais envoyé au navigateur.
+  if (production) {
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
 
   app.setGlobalPrefix('api');
   const swaggerUiPath = dirname(
